@@ -768,7 +768,7 @@ static void init_iop(void)
     SifExecModuleBuffer(usbmass_bd_irx, size_usbmass_bd_irx, 0, NULL, &ret);
 
     fileXioInit();
-    sceCdInit(SCECdINoCD);
+    sceCdInit(SCECdINoD);
     mcInit(MC_TYPE_XMC);
     padInit(0);
     padPortOpen(0, 0, padbuf);
