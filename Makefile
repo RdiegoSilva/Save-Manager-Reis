@@ -6,7 +6,11 @@ EE_OBJS = main.o \
 
 EE_LIBS = -lgskit -ldmakit -lpad -lmc -lcdvd -lfileXio -lpatches
 
-EE_CFLAGS += -O2 -Wall
+EE_CFLAGS += -O2 -Wall -DNEWLIB_PORT_AWARE
+
+# gsKit fica fora do PS2SDK, em $(PS2DEV)/gsKit
+EE_INCS    += -I$(PS2DEV)/gsKit/include
+EE_LDFLAGS += -L$(PS2DEV)/gsKit/lib
 
 all: $(EE_BIN)
 

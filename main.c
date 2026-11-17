@@ -14,18 +14,25 @@
  * ============================================================
  */
 
+#ifndef NEWLIB_PORT_AWARE
+#define NEWLIB_PORT_AWARE   /* I/O de arquivos via POSIX; fileXio so para fileXioInit() */
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include <kernel.h>
 #include <sifrpc.h>
 #include <loadfile.h>
 #include <iopcontrol.h>
 #include <sbv_patches.h>
-#include <fileio.h>
 #include <fileXio_rpc.h>
-#include <iox_stat.h>
 #include <libmc.h>
 #include <libpad.h>
 #include <libcdvd.h>
@@ -47,6 +54,11 @@ extern unsigned char usbmass_bd_irx[];   extern unsigned int size_usbmass_bd_irx
 #define MAX_ENT       128
 #define CHUNK         (32 * 1024)
 #define MC_ATTR_DIR   0x0020
+/* flags do mcOpen (valores do IOP, diferentes dos do newlib) */
+#define MC_RDONLY     0x0001
+#define MC_WRONLY     0x0002
+#define MC_CREAT      0x0200
+#define MC_TRUNC      0x0400
 #define FW            14.0f            /* largura aproximada de um caractere (escala 1.0) */
 
 enum { TAB_MC = 0, TAB_USB = 1, TAB_NET = 2 };
@@ -466,20 +478,30 @@ static void refresh_mc(void)
  * ============================================================ */
 static int usb_ready(void)
 {
-    int d = fileXioDopen("mass:/");
-    if (d >= 0) { fileXioDclose(d); return 1; }
+    DIR *d = opendir("mass:/");
+    if (d) { closedir(d); return 1; }
     return 0;
+}
+
+static int is_dir(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 static u32 dir_size(const char *path)
 {
-    iox_dirent_t de;
+    struct dirent *de;
+    struct stat st;
+    char full[320];
     u32 total = 0;
-    int d = fileXioDopen(path);
-    if (d < 0) return 0;
-    while (fileXioDread(d, &de) > 0)
-        if (!FIO_S_ISDIR(de.stat.mode)) total += de.stat.size;
-    fileXioDclose(d);
+    DIR *d = opendir(path);
+    if (!d) return 0;
+    while ((de = readdir(d)) != NULL) {
+        snprintf(full, sizeof(full), "%s/%s", path, de->d_name);
+        if (stat(full, &st) == 0 && !S_ISDIR(st.st_mode)) total += (u32)st.st_size;
+    }
+    closedir(d);
     return total;
 }
 
@@ -492,42 +514,45 @@ static int cmp_usb(const void *a, const void *b)
 
 static void refresh_usb(void)
 {
-    iox_dirent_t ge, se;
-    char path[160];
-    int g, s;
+    struct dirent *ge, *se;
+    char path[160], gname[64];
+    DIR *g, *s;
     usbCount = 0;
     cursorPos[TAB_USB] = 0; topRow[TAB_USB] = 0;
     usbOk = usb_ready();
     if (!usbOk) return;
-    g = fileXioDopen(ROOT_DIR);
-    if (g < 0) return;
-    while (fileXioDread(g, &ge) > 0 && usbCount < MAX_ENT) {
-        if (!FIO_S_ISDIR(ge.stat.mode) || ge.name[0] == '.') continue;
-        snprintf(path, sizeof(path), ROOT_DIR "/%s", ge.name);
-        s = fileXioDopen(path);
-        if (s < 0) continue;
-        while (fileXioDread(s, &se) > 0 && usbCount < MAX_ENT) {
+    g = opendir(ROOT_DIR);
+    if (!g) return;
+    while ((ge = readdir(g)) != NULL && usbCount < MAX_ENT) {
+        if (ge->d_name[0] == '.') continue;
+        snprintf(gname, sizeof(gname), "%s", ge->d_name);
+        snprintf(path, sizeof(path), ROOT_DIR "/%s", gname);
+        if (!is_dir(path)) continue;
+        s = opendir(path);
+        if (!s) continue;
+        while ((se = readdir(s)) != NULL && usbCount < MAX_ENT) {
             Entry *e;
             int y = 0, mo = 0, d = 0, h = 0, mi = 0, sc = 0;
             char sub[256];
-            if (!FIO_S_ISDIR(se.stat.mode) || se.name[0] == '.') continue;
+            if (se->d_name[0] == '.') continue;
+            snprintf(sub, sizeof(sub), "%s/%s", path, se->d_name);
+            if (!is_dir(sub)) continue;
             e = &usbList[usbCount++];
             memset(e, 0, sizeof(*e));
-            snprintf(e->name, sizeof(e->name), "%s", ge.name);
-            snprintf(e->stamp, sizeof(e->stamp), "%s", se.name);
-            if (sscanf(se.name, "%d-%d-%d_%d-%d-%d", &y, &mo, &d, &h, &mi, &sc) >= 5) {
+            snprintf(e->name, sizeof(e->name), "%s", gname);
+            snprintf(e->stamp, sizeof(e->stamp), "%s", se->d_name);
+            if (sscanf(se->d_name, "%d-%d-%d_%d-%d-%d", &y, &mo, &d, &h, &mi, &sc) >= 5) {
                 snprintf(e->date, sizeof(e->date), "%02d/%02d/%02d", d, mo, y % 100);
                 snprintf(e->time, sizeof(e->time), "%02d:%02d", h, mi);
             } else {
                 snprintf(e->date, sizeof(e->date), "--/--/--");
                 snprintf(e->time, sizeof(e->time), "--:--");
             }
-            snprintf(sub, sizeof(sub), "%s/%s", path, se.name);
             e->size = dir_size(sub);
         }
-        fileXioDclose(s);
+        closedir(s);
     }
-    fileXioDclose(g);
+    closedir(g);
     qsort(usbList, usbCount, sizeof(Entry), cmp_usb);
 }
 
@@ -537,20 +562,20 @@ static void refresh_usb(void)
 static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
 {
     int fd = -1, r = 0, out, err = 0;
-    mcOpen(mcSlot, 0, src, O_RDONLY);
+    mcOpen(mcSlot, 0, src, MC_RDONLY);
     mcSync(0, NULL, &fd);
     if (fd < 0) return -1;
-    out = fileXioOpen(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (out < 0) { mcClose(fd); mcSync(0, NULL, &r); return -2; }
     for (;;) {
         mcRead(fd, iobuf, CHUNK);
         mcSync(0, NULL, &r);
         if (r <= 0) { if (r < 0) err = -3; break; }
-        if (fileXioWrite(out, iobuf, r) != r) { err = -4; break; }
+        if (write(out, iobuf, r) != r) { err = -4; break; }
         g_done += r;
         progress(label, g_done, g_total);
     }
-    fileXioClose(out);
+    close(out);
     mcClose(fd); mcSync(0, NULL, &r);
     return err;
 }
@@ -558,13 +583,13 @@ static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
 static int copy_usb_to_mc(const char *src, const char *dst, const char *label)
 {
     int in, fd = -1, r = 0, w = 0, err = 0;
-    in = fileXioOpen(src, O_RDONLY, 0);
+    in = open(src, O_RDONLY);
     if (in < 0) return -1;
-    mcOpen(mcSlot, 0, dst, O_WRONLY | O_CREAT | O_TRUNC);
+    mcOpen(mcSlot, 0, dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
     mcSync(0, NULL, &fd);
-    if (fd < 0) { fileXioClose(in); return -2; }
+    if (fd < 0) { close(in); return -2; }
     for (;;) {
-        r = fileXioRead(in, iobuf, CHUNK);
+        r = read(in, iobuf, CHUNK);
         if (r <= 0) { if (r < 0) err = -3; break; }
         mcWrite(fd, iobuf, r);
         mcSync(0, NULL, &w);
@@ -572,7 +597,7 @@ static int copy_usb_to_mc(const char *src, const char *dst, const char *label)
         g_done += r;
         progress(label, g_done, g_total);
     }
-    fileXioClose(in);
+    close(in);
     mcClose(fd); mcSync(0, NULL, &r);
     return err;
 }
@@ -585,9 +610,9 @@ static int export_one(const Entry *e, const char *stamp)
 
     snprintf(d1, sizeof(d1), ROOT_DIR "/%s", e->name);
     snprintf(d2, sizeof(d2), "%s/%s", d1, stamp);
-    fileXioMkdir(ROOT_DIR, 0777);
-    fileXioMkdir(d1, 0777);
-    fileXioMkdir(d2, 0777);
+    mkdir(ROOT_DIR, 0777);
+    mkdir(d1, 0777);
+    mkdir(d2, 0777);
 
     snprintf(src, sizeof(src), "/%s/*", e->name);
     n = mc_list(mcSlot, src, subtbl, MAX_ENT);
@@ -605,24 +630,26 @@ static int export_one(const Entry *e, const char *stamp)
 static int import_one(const Entry *e)
 {
     char dir[200], src[300], dst[96], lbl[96];
-    iox_dirent_t de;
-    int d, r = 0, fails = 0;
+    struct dirent *de;
+    DIR *d;
+    int r = 0, fails = 0;
 
     snprintf(dst, sizeof(dst), "/%s", e->name);
     mcMkDir(mcSlot, 0, dst);
     mcSync(0, NULL, &r);                    /* ja existir nao e erro: sobrescreve arquivos */
 
     snprintf(dir, sizeof(dir), ROOT_DIR "/%s/%s", e->name, e->stamp);
-    d = fileXioDopen(dir);
-    if (d < 0) return 1;
-    while (fileXioDread(d, &de) > 0) {
-        if (FIO_S_ISDIR(de.stat.mode)) continue;
-        snprintf(src, sizeof(src), "%s/%s", dir, de.name);
-        snprintf(dst, sizeof(dst), "/%s/%s", e->name, de.name);
+    d = opendir(dir);
+    if (!d) return 1;
+    while ((de = readdir(d)) != NULL) {
+        if (de->d_name[0] == '.') continue;
+        snprintf(src, sizeof(src), "%s/%s", dir, de->d_name);
+        if (is_dir(src)) continue;
+        snprintf(dst, sizeof(dst), "/%s/%s", e->name, de->d_name);
         snprintf(lbl, sizeof(lbl), "%s", e->name);
         if (copy_usb_to_mc(src, dst, lbl) < 0) fails++;
     }
-    fileXioDclose(d);
+    closedir(d);
     return fails;
 }
 
