@@ -601,6 +601,7 @@ static void render(void)
             x = key_pill(x, H - 30, "R2", fl);
             x = key_pill(x, H - 30, "SELECT", "Slot");
         }
+        if (tab == TAB_USB) x = key_pill(x, H - 30, "L2", "Converter p/ Pasta");
         key_pill(x, H - 30, "START", "Sair");
     }
 
@@ -1694,6 +1695,115 @@ static int import_max(const Entry *e)
     return fails;
 }
 
+/* ---------------- Conversao .psu/.max -> pasta (so no USB) ---------------- */
+static int fd_to_file(int in, u32 size, const char *dst, const char *label)
+{
+    int out, r, err = 0;
+    u32 left = size;
+    out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (out < 0) return -2;
+    while (left) {
+        r = read(in, iobuf, left > CHUNK ? CHUNK : left);
+        if (r <= 0) { err = -3; break; }
+        if (wr_all(out, iobuf, (u32)r) != 0) { err = -4; break; }
+        left -= (u32)r;
+        g_done += (u32)r;
+        progress(label, g_done, g_total);
+    }
+    close(out);
+    return err;
+}
+
+static int mem_to_file(const u8 *src, u32 size, const char *dst, const char *label)
+{
+    int out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (out < 0) return -2;
+    if (wr_all(out, src, size) != 0) { close(out); return -4; }
+    close(out);
+    g_done += size;
+    progress(label, g_done, g_total);
+    return 0;
+}
+
+static void conv_dir(const Entry *e, char *dir, int n)
+{
+    char d1[128];
+    snprintf(d1, sizeof(d1), ROOT_DIR "/%s", e->name);
+    snprintf(dir, n, "%s/%s", d1, e->stamp);
+    mkdir(ROOT_DIR, 0777);
+    mkdir(d1, 0777);
+    mkdir(dir, 0777);
+}
+
+static int convert_psu(const Entry *e)
+{
+    u8 h[512];
+    char dir[200], dst[300], lbl[96], fname[448];
+    int fd, fails = 0;
+    fd = open(e->path, O_RDONLY);
+    if (fd < 0) return 1;
+    if (read(fd, h, 512) != 512 || !(ld16(h) & MC_ATTR_DIR)) { close(fd); return 1; }
+    conv_dir(e, dir, sizeof(dir));
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+    while (read(fd, h, 512) == 512) {
+        u32 mode = ld16(h), sz = ld32(h + 4), pad;
+        int rc;
+        if (mode & MC_ATTR_DIR) continue;
+        memcpy(fname, h + 64, 447);
+        fname[447] = 0;
+        pad = (1024 - (sz & 1023)) & 1023;
+        if (!safe_name(fname)) { fails++; lseek(fd, (off_t)sz + (off_t)pad, SEEK_CUR); continue; }
+        snprintf(dst, sizeof(dst), "%s/%s", dir, fname);
+        rc = fd_to_file(fd, sz, dst, lbl);
+        if (rc == -2) { fails++; lseek(fd, (off_t)sz, SEEK_CUR); }
+        else if (rc < 0) { fails++; break; }
+        lseek(fd, (off_t)pad, SEEK_CUR);
+    }
+    close(fd);
+    return fails;
+}
+
+static int convert_max(const Entry *e)
+{
+    u8 h[0x5C], *arch;
+    char dir[200], dst[300], lbl[96], fname[33];
+    u32 nfiles, decSz, p = 0;
+    int fd, fails = 0, k;
+    long got;
+    fd = open(e->path, O_RDONLY);
+    if (fd < 0) return 1;
+    if (read(fd, h, sizeof(h)) != (int)sizeof(h) || memcmp(h, "Ps2PowerSave", 12) != 0) { close(fd); return 1; }
+    nfiles = ld32(h + 0x54);
+    decSz  = ld32(h + 0x58);
+    if (nfiles == 0 || decSz == 0 || decSz > MAX_ARCH) { close(fd); return 1; }
+    arch = (u8 *)malloc(decSz);
+    if (!arch) { close(fd); return 1; }
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+    lseek(fd, 0x58, SEEK_SET);
+    mrd.fd = fd; mrd.n = 0; mrd.i = 0;
+    got = lzari_decode(max_get, NULL, arch, decSz, max_dtick, lbl);
+    close(fd);
+    if (got != (long)decSz) { free(arch); return 1; }
+    conv_dir(e, dir, sizeof(dir));
+    for (k = 0; k < (int)nfiles; k++) {
+        u32 sz;
+        if (p + 36 > decSz) { fails++; break; }
+        sz = ld32(arch + p);
+        memcpy(fname, arch + p + 4, 32);
+        fname[32] = 0;
+        if (sz > decSz - p - 36) { fails++; break; }
+        if (!safe_name(fname)) fails++;
+        else {
+            snprintf(dst, sizeof(dst), "%s/%s", dir, fname);
+            if (mem_to_file(arch + p + 36, sz, dst, lbl) < 0) fails++;
+        }
+        p += 36 + sz;
+        p += (16 - ((p + 8) & 15)) & 15;
+    }
+    free(arch);
+    return fails;
+}
+
 /* despacho por formato */
 static int export_one(const Entry *e, const char *stamp)
 {
@@ -1799,6 +1909,29 @@ static void do_import(void)
     refresh_mc();
     if (fails) toast("Concluido com %d falha(s)", fails);
     else       toast("%d save(s) importado(s) com sucesso", k);
+}
+
+static void do_convert(void)
+{
+    int idx[MAX_ENT], k, i, n = 0, fails = 0;
+    if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB%.0d", 0); return; }
+    k = gather(usbList, usbCount, idx);
+    g_done = 0; g_total = 0;
+    for (i = 0; i < k; i++)
+        if (usbList[idx[i]].kind != FMT_DIR) g_total += usbList[idx[i]].size;
+    if (g_total == 0) { toast("Nada para converter (so .psu / .max)%.0d", 0); return; }
+    snprintf(ui.title, sizeof(ui.title), "CONVERTENDO PARA PASTA");
+    ui.busy = 1;
+    for (i = 0; i < k; i++) {
+        Entry *e = &usbList[idx[i]];
+        if (e->kind == FMT_PSU) { fails += convert_psu(e); n++; }
+        else if (e->kind == FMT_MAX) { fails += convert_max(e); n++; }
+    }
+    ui.busy = 0;
+    for (i = 0; i < usbCount; i++) usbList[i].sel = 0;
+    refresh_usb();
+    if (fails) toast("Concluido com %d falha(s)", fails);
+    else       toast("%d save(s) convertido(s) para pasta", n);
 }
 
 /* ============================================================
@@ -1921,6 +2054,7 @@ int main(int argc, char *argv[])
             if (tab == TAB_USB) refresh_usb();
         }
         if ((pad_new & PAD_SELECT) && tab == TAB_MC) { mcSlot ^= 1; refresh_mc(); }
+        if ((pad_new & PAD_L2) && tab == TAB_USB && usbCount > 0) do_convert();
         if ((pad_new & PAD_R2) && tab == TAB_MC) {
             expFmt = (expFmt + 1) % 3;
             snprintf(ui.toast, sizeof(ui.toast), "Formato de exportacao: %s", FMT_NAME[expFmt]);

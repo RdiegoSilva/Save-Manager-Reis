@@ -42,6 +42,7 @@ nunca sobrescreve backups antigos (exceto dentro do mesmo segundo).
   (a etiqueta PSU / MAX aparece no card). Para importar um save baixado da
   internet, basta colocar o `.psu` ou `.max` dentro de `mass:/SaveManagerReis/`
   (solto ou dentro de uma subpasta) e apertar **O** para atualizar.
+- **Converter para pasta:** na aba USB, marque os `.psu`/`.max` e aperte **L2**. Eles são extraídos para o formato Pasta (`SaveManagerReis/<SAVE>/<nome-do-arquivo>/`), sem usar o Memory Card.
 - O nome do save é lido de dentro do arquivo, não do nome do arquivo.
 - Saves em PSU/MAX mostram o ícone da região (o ícone 3D só aparece nos backups em Pasta).
 - Limite: um `.max` descomprimido pode ter até 24 MB.
@@ -59,6 +60,7 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Círculo | Atualizar a lista |
 | L1 / R1 | Trocar de aba |
 | SELECT | Alternar slot 1 / slot 2 do Memory Card |
+| L2 | Converter .psu/.max marcados para pasta (aba USB) |
 | R2 | Escolher o formato de exportação (Pasta / PSU / MAX) |
 | START | Sair |
 
