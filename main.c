@@ -36,6 +36,7 @@
 #include <libmc.h>
 #include <libpad.h>
 #include <libcdvd.h>
+#include <osd_config.h>
 #include <gsKit.h>
 #include <dmaKit.h>
 
@@ -129,8 +130,14 @@ static int pad_hold;
 typedef struct { int y, mo, d, h, mi, s; } Now;
 #define BCD(x) ((((x) >> 4) & 0xF) * 10 + ((x) & 0xF))
 
-/* fuso do usuario em minutos em relacao a UTC (-180 = Brasilia). L2/R2 ajusta. */
-static int tzMin = -180;
+/* Fuso configurado NO PS2 (minutos em relacao ao GMT, ja com horario de verao).
+ * O relogio do PS2 e sempre de Toquio (540); o console aplica o fuso escolhido no menu dele. */
+static int tzMin = 540;
+static void tz_refresh(void)
+{
+    tzMin = configGetTimezone();
+    if (configIsDaylightSavingEnabled()) tzMin += 60;
+}
 
 static long days_from_civil(int y, int m, int d)
 {
@@ -177,6 +184,7 @@ static void get_now(Now *n)
 {
     sceCdCLOCK c;
     memset(n, 0, sizeof(*n));
+    tz_refresh();
     if (sceCdReadClock(&c) && c.stat == 0) {
         n->y  = 2000 + BCD(c.year);
         n->mo = BCD(c.month & 0x1F);
@@ -211,7 +219,7 @@ static void hgrad(float x, float y, float w, float h, u64 c1, u64 c2)
 
 static void text(float x, float y, float scale, u64 col, const char *s)
 {
-    gsKit_fontm_print_scaled(gsGlobal, font, x, y, 3, scale, col, s);
+    gsKit_fontm_print_scaled(gsGlobal, font, x, y, 1, scale, col, s);
 }
 
 static float tw(const char *s, float scale) { return (float)strlen(s) * FW * scale; }
@@ -337,6 +345,7 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
 
     /* icone da regiao */
     vgrad(x + 8, y + 11, 42, 42, reg_col(r), RGBA(20, 22, 50, 0x80));
+    fill_circle(x + 29, y + 32, 17, RGBA(255, 255, 255, 0x22));
     ctext(x + 29, y + 22, 0.8f, C_TXT, REG_TAG[r]);
 
     /* tamanho / data / hora */
@@ -380,7 +389,13 @@ static void render(void)
     text(M + 48, 33, 0.40f, C_MUTED, "Gerenciador de saves  " APP_VERSION);
     if (clk.y) {
         snprintf(buf, sizeof(buf), "%02d:%02d", clk.h, clk.mi);
-        snprintf(buf2, sizeof(buf2), "%02d/%02d/%04d  GMT%+d", clk.d, clk.mo, clk.y, tzMin / 60);
+        {
+            int az = tzMin < 0 ? -tzMin : tzMin;
+            char zs[12];
+            if (az % 60) snprintf(zs, sizeof(zs), "%c%d:%02d", tzMin < 0 ? '-' : '+', az / 60, az % 60);
+            else         snprintf(zs, sizeof(zs), "%c%d", tzMin < 0 ? '-' : '+', az / 60);
+            snprintf(buf2, sizeof(buf2), "%02d/%02d/%04d  GMT%s", clk.d, clk.mo, clk.y, zs);
+        }
     } else {
         snprintf(buf, sizeof(buf), "--:--");
         snprintf(buf2, sizeof(buf2), "--/--/----");
@@ -499,7 +514,6 @@ static void render(void)
         x = M;
         x = key_pill(x, H - 30, "L1/R1", "Abas");
         if (tab == TAB_MC) x = key_pill(x, H - 30, "SELECT", "Slot");
-        x = key_pill(x, H - 30, "L2/R2", "Fuso");
         key_pill(x, H - 30, "START", "Sair");
     }
 
@@ -734,27 +748,6 @@ static void refresh_usb(void)
 /* ============================================================
  *  Copia de arquivos
  * ============================================================ */
-/* ---- configuracao (fuso horario) salva no pendrive ---- */
-static void cfg_load(void)
-{
-    FILE *f = fopen(ROOT_DIR "/config.ini", "r");
-    int v;
-    if (!f) return;
-    if (fscanf(f, "tz=%d", &v) == 1 && v >= -720 && v <= 840) tzMin = v;
-    fclose(f);
-}
-
-static void cfg_save(void)
-{
-    FILE *f;
-    if (!usb_ready()) return;
-    mkdir(ROOT_DIR, 0777);
-    f = fopen(ROOT_DIR "/config.ini", "w");
-    if (!f) return;
-    fprintf(f, "tz=%d\n", tzMin);
-    fclose(f);
-}
-
 static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
 {
     int fd = -1, r = 0, out, err = 0;
@@ -975,20 +968,23 @@ static void init_gfx(void)
     gsGlobal = gsKit_init_global();
     gsGlobal->PSM = GS_PSM_CT32;
     gsGlobal->PSMZ = GS_PSMZ_16S;
-    gsGlobal->ZBuffering = GS_SETTING_OFF;
+    gsGlobal->ZBuffering = GS_SETTING_ON;       /* Z-buffer real (alocado e limpo pelo gsKit_clear) */
     gsGlobal->DoubleBuffering = GS_SETTING_ON;
     gsGlobal->PrimAlphaEnable = GS_SETTING_ON;
 
     dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
     dmaKit_chan_init(DMA_CHANNEL_GIF);
 
-    gsGlobal->Test->ZTST = 1;                 /* Z-test sempre passa (sem Z-buffer) */
+    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);   /* mistura alfa normal */
+    gsKit_vram_clear(gsGlobal);
     gsKit_init_screen(gsGlobal);
     gsKit_mode_switch(gsGlobal, GS_ONESHOT);
 
     font = gsKit_init_fontm();
     gsKit_fontm_upload(gsGlobal, font);
     font->Spacing = 0.62f;
+
+    gsKit_clear(gsGlobal, RGBA(0, 0, 0, 0x80));
 }
 
 int main(int argc, char *argv[])
@@ -997,6 +993,7 @@ int main(int argc, char *argv[])
     Entry *L;
 
     init_iop();
+    tz_refresh();
     init_gfx();
 
     /* aguarda o controle ficar pronto */
@@ -1018,7 +1015,6 @@ int main(int argc, char *argv[])
     }
     ui.busy = 0;
 
-    cfg_load();
     refresh_mc();
     refresh_usb();
 
@@ -1054,15 +1050,6 @@ int main(int argc, char *argv[])
             if (tab == TAB_USB) refresh_usb();
         }
         if ((pad_new & PAD_SELECT) && tab == TAB_MC) { mcSlot ^= 1; refresh_mc(); }
-
-        if (pad_new & (PAD_L2 | PAD_R2)) {
-            tzMin += (pad_new & PAD_R2) ? 60 : -60;
-            if (tzMin < -720) tzMin = -720;
-            if (tzMin > 840)  tzMin = 840;
-            cfg_save();
-            clkT = 0;
-            if (mcReady) refresh_mc();
-        }
 
         if (ui.toastT > 0) ui.toastT--;
 
