@@ -8,6 +8,7 @@ Gerenciador de saves com interface estilo dashboard.
   ícone por região (US / EU / JP / KR), nome da pasta, tamanho, data e hora.
 - **Exporta** Memory Card → pendrive / HD USB.
 - **Importa** pendrive / HD USB → Memory Card (pergunta antes de sobrescrever).
+- **Converte direto** nos formatos **PSU** e **MAX** (exportar e importar), além da pasta normal.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
 - Aba **REDE (SMB)**: reservada, ainda não implementada.
 
@@ -16,12 +17,34 @@ Gerenciador de saves com interface estilo dashboard.
 ```
 mass:/SaveManagerReis/
  └─ BASLUS-20552GTA3/
-     ├─ 2026-11-16_21-18-05/   <- cada exportação cria uma pasta com data/hora
+     ├─ 2026-11-16_21-18-05/        <- formato Pasta: arquivos soltos do save
      │    ├─ icon.sys
      │    ├─ gta3.ico
      │    └─ ...arquivos do save
-     └─ 2026-11-20_10-02-41/
+     ├─ 2026-11-20_10-02-41.psu     <- formato PSU
+     └─ 2026-11-20_10-02-41.max     <- formato MAX
 ```
+
+Os arquivos `.psu` e `.max` têm a data/hora no nome, então exportar várias vezes
+nunca sobrescreve backups antigos (exceto dentro do mesmo segundo).
+
+## Formatos de save (PSU e MAX)
+
+| Formato | Origem / uso | Observação |
+|---|---|---|
+| **Pasta** | padrão do Save Manager Reis | arquivos soltos, sem compactação |
+| **PSU** | EMS, uLaunchELF, mymc, PCSX2 | sem compactação, o mais compatível |
+| **MAX** | Action Replay MAX (`Ps2PowerSave`) | compactado (LZARI) + CRC32 |
+
+- **Exportar:** na aba MEMORY CARD, **R2** troca o formato (Pasta → PSU → MAX) e
+  **Triângulo** exporta nele.
+- **Importar:** na aba USB aparecem os backups em qualquer um dos formatos
+  (a etiqueta PSU / MAX aparece no card). Para importar um save baixado da
+  internet, basta colocar o `.psu` ou `.max` dentro de `mass:/SaveManagerReis/`
+  (solto ou dentro de uma subpasta) e apertar **O** para atualizar.
+- O nome do save é lido de dentro do arquivo, não do nome do arquivo.
+- Saves em PSU/MAX mostram o ícone da região (o ícone 3D só aparece nos backups em Pasta).
+- Limite: um `.max` descomprimido pode ter até 24 MB.
 
 Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 
@@ -36,11 +59,15 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Círculo | Atualizar a lista |
 | L1 / R1 | Trocar de aba |
 | SELECT | Alternar slot 1 / slot 2 do Memory Card |
+| R2 | Escolher o formato de exportação (Pasta / PSU / MAX) |
 | START | Sair |
 
 Sem nenhum card marcado, a ação vale para o card selecionado.
 
 ## Compilar o ELF
+
+O projeto agora tem três arquivos de código: `main.c`, `lzari.c` e `lzari.h`
+(compressão do formato MAX). Mantenha os três na mesma pasta do `Makefile`.
 
 ### Opção 1 — Docker (mais fácil)
 
@@ -73,4 +100,6 @@ uLaunchELF, FreeMcBoot, OPL, etc.
 - Transferência por rede (SMB).
 - HD interno (APA/PFS).
 - Ícones 3D reais dos saves (`.ico` / `.icn`) no lugar dos ícones por região.
-- Backup completo do cartão e importação de formatos `.psu` / `.max`.
+- Importar `.cbs` (CodeBreaker), `.xps` / `.sps` (SharkPort/Xploder).
+- Ícone 3D também para saves em PSU / MAX.
+- Backup completo do cartão (imagem inteira).

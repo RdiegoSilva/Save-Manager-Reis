@@ -8,6 +8,7 @@
  *   - Exporta saves do Memory Card para pendrive / HD USB:
  *         mass:/SaveManagerReis/<PASTA_DO_SAVE>/<AAAA-MM-DD_HH-MM-SS>/
  *   - Importa backups do pendrive / HD USB para o Memory Card.
+ *   - Converte direto: exporta/importa saves em .PSU e .MAX (alem de pasta).
  *   - Aba REDE (SMB) reservada para a proxima versao.
  *
  *   Compilar com PS2SDK (veja README.md).
@@ -41,6 +42,8 @@
 #include <gsKit.h>
 #include <dmaKit.h>
 
+#include "lzari.h"
+
 /* ---------------- IRX embutidos (gerados pelo Makefile) ---------------- */
 extern unsigned char iomanX_irx[];       extern unsigned int size_iomanX_irx;
 extern unsigned char fileXio_irx[];      extern unsigned int size_fileXio_irx;
@@ -51,7 +54,7 @@ extern unsigned char usbmass_bd_irx[];   extern unsigned int size_usbmass_bd_irx
 
 /* ---------------- Constantes ---------------- */
 #define APP_NAME      "SAVE MANAGER REIS"
-#define APP_VERSION   "v1.0"
+#define APP_VERSION   "v1.1"
 #define ROOT_DIR      "mass:/SaveManagerReis"
 #define MAX_ENT       128
 #define CHUNK         (32 * 1024)
@@ -64,6 +67,8 @@ extern unsigned char usbmass_bd_irx[];   extern unsigned int size_usbmass_bd_irx
 #define FW            16.0f           /* largura de um caractere na escala 1.0 (Spacing 0.62) */
 
 enum { TAB_MC = 0, TAB_USB = 1, TAB_NET = 2 };
+enum { FMT_DIR = 0, FMT_PSU = 1, FMT_MAX = 2 };
+#define MAX_ARCH      (24u * 1024 * 1024)   /* limite do arquivo descomprimido de um .max */
 
 /* ---------------- Cores ---------------- */
 #define RGBA(r, g, b, a) GS_SETREG_RGBAQ((r), (g), (b), (a), 0x00)
@@ -92,6 +97,8 @@ typedef struct {
     char time[8];      /* hh:mm                                  */
     u32  size;         /* bytes                                  */
     int  sel;          /* marcado                                */
+    u8   kind;         /* FMT_DIR / FMT_PSU / FMT_MAX (aba USB)  */
+    char path[128];    /* caminho completo do backup (aba USB)   */
 } Entry;
 
 typedef struct {
@@ -120,6 +127,9 @@ static sceMcTblGetDir mctbl[MAX_ENT]  __attribute__((aligned(64)));
 static sceMcTblGetDir subtbl[MAX_ENT] __attribute__((aligned(64)));
 static u8   iobuf[CHUNK]              __attribute__((aligned(64)));
 static char padbuf[256]               __attribute__((aligned(64)));
+
+static int expFmt = FMT_DIR, mcRawN = 0;
+static const char *FMT_NAME[] = { "Pasta", "PSU", "MAX" };
 
 static u32 g_done, g_total;
 static u32 pad_new, pad_old;
@@ -421,6 +431,10 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     text(x + 58, y + 10, 0.50f, C_ACC, buf);
     text(x + 58, y + 26, 0.45f, C_TXT, e->date);
     text(x + 58, y + 40, 0.45f, C_MUTED, e->time);
+    if (isUsb && e->kind != FMT_DIR) {
+        const char *tg = FMT_NAME[e->kind];
+        text(x + w - 8 - tw(tg, 0.45f), y + 40, 0.45f, C_ACC2, tg);
+    }
 
     /* nome */
     fit(buf, e->name, w - 16, 0.50f);
@@ -539,7 +553,7 @@ static void render(void)
             ctext(W / 2, 200, 0.48f, C_MUTED, "SELECT troca entre slot 1 e slot 2");
         } else {
             ctext(W / 2, 160, 0.75f, C_TXT, usbOk ? "Nenhum backup ainda" : "Conecte um pendrive / HD USB");
-            ctext(W / 2, 200, 0.48f, C_MUTED, usbOk ? "Exporte um save na aba MEMORY CARD" : "Depois pressione O para atualizar");
+            ctext(W / 2, 200, 0.48f, C_MUTED, usbOk ? "Exporte um save ou coloque .psu / .max em SaveManagerReis" : "Depois pressione O para atualizar");
         }
     } else {
         const float gap = 10, vgap = 8, top = 130, ch = 78;
@@ -581,7 +595,12 @@ static void render(void)
         x = key_btn(x, H - 50, 3, C_RED, "Atualizar");
         x = M;
         x = key_pill(x, H - 30, "L1/R1", "Abas");
-        if (tab == TAB_MC) x = key_pill(x, H - 30, "SELECT", "Slot");
+        if (tab == TAB_MC) {
+            char fl[32];
+            snprintf(fl, sizeof(fl), "Formato: %s", FMT_NAME[expFmt]);
+            x = key_pill(x, H - 30, "R2", fl);
+            x = key_pill(x, H - 30, "SELECT", "Slot");
+        }
         key_pill(x, H - 30, "START", "Sair");
     }
 
@@ -707,6 +726,7 @@ static void refresh_mc(void)
     mc_check();
     if (!mcReady) return;
     n = mc_list(mcSlot, "/*", mctbl, MAX_ENT);
+    mcRawN = n;
     for (i = 0; i < n && mcCount < MAX_ENT; i++) {
         sceMcTblGetDir *t = &mctbl[i];
         Entry *e;
@@ -770,6 +790,92 @@ static int cmp_usb(const void *a, const void *b)
     return c ? c : strcmp(x->name, y->name);
 }
 
+/* ---- leitura little-endian (usada tambem nos formatos .psu/.max) ---- */
+static u32 ld16(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8); }
+static u32 ld32(const u8 *p) { return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24); }
+static void st16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }
+static void st32(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24); }
+
+/* nome valido para arquivo/pasta dentro do Memory Card */
+static int safe_name(const char *n)
+{
+    size_t l = strlen(n);
+    if (l == 0 || l > 31) return 0;
+    if (!strcmp(n, ".") || !strcmp(n, "..")) return 0;
+    if (strchr(n, '/') || strchr(n, '\\') || strchr(n, ':')) return 0;
+    return 1;
+}
+
+/* .psu / .max (sem diferenciar maiusculas) */
+static int ext_kind(const char *n)
+{
+    size_t l = strlen(n);
+    if (l > 4 && n[l - 4] == '.') {
+        char a = n[l - 3] | 0x20, b = n[l - 2] | 0x20, c = n[l - 1] | 0x20;
+        if (a == 'p' && b == 's' && c == 'u') return FMT_PSU;
+        if (a == 'm' && b == 'a' && c == 'x') return FMT_MAX;
+    }
+    return FMT_DIR;
+}
+
+/* le o cabecalho de um .psu/.max: nome da pasta do save e tamanho. 0 = invalido */
+static int peek_pack(const char *path, int kind, char *name, int nmax, u32 *size)
+{
+    u8 h[512];
+    struct stat st;
+    int fd, r;
+    fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    r = read(fd, h, sizeof(h));
+    close(fd);
+    if (stat(path, &st) != 0) return 0;
+    if (kind == FMT_PSU) {
+        if (r < 512 || !(ld16(h) & MC_ATTR_DIR)) return 0;
+        snprintf(name, nmax, "%.31s", (char *)h + 64);
+        *size = (u32)st.st_size;
+    } else {
+        if (r < 0x5C || memcmp(h, "Ps2PowerSave", 12) != 0) return 0;
+        snprintf(name, nmax, "%.31s", (char *)h + 0x10);
+        *size = ld32(h + 0x58);                     /* tamanho descomprimido */
+    }
+    return safe_name(name) && name[0] != '.';
+}
+
+static void add_usb(const char *name, const char *stamp, const char *path, int kind, u32 size)
+{
+    Entry *e;
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, sc = 0;
+    if (usbCount >= MAX_ENT) return;
+    e = &usbList[usbCount++];
+    memset(e, 0, sizeof(*e));
+    snprintf(e->name, sizeof(e->name), "%s", name);
+    snprintf(e->stamp, sizeof(e->stamp), "%s", stamp);
+    snprintf(e->path, sizeof(e->path), "%s", path);
+    e->kind = (u8)kind;
+    e->size = size;
+    if (sscanf(stamp, "%d-%d-%d_%d-%d-%d", &y, &mo, &d, &h, &mi, &sc) >= 5) {
+        snprintf(e->date, sizeof(e->date), "%02d/%02d/%02d", d, mo, y % 100);
+        snprintf(e->time, sizeof(e->time), "%02d:%02d", h, mi);
+    } else {
+        snprintf(e->date, sizeof(e->date), "--/--/--");
+        snprintf(e->time, sizeof(e->time), "--:--");
+    }
+}
+
+/* adiciona um .psu/.max (se o cabecalho for valido) */
+static void add_pack_file(const char *path, const char *fname, int kind)
+{
+    char name[40], stamp[24];
+    u32 size = 0;
+    size_t l = strlen(fname) - 4;
+    if (strlen(path) >= sizeof(((Entry *)0)->path)) return;
+    if (!peek_pack(path, kind, name, sizeof(name), &size)) return;
+    if (l > sizeof(stamp) - 1) l = sizeof(stamp) - 1;
+    memcpy(stamp, fname, l);
+    stamp[l] = 0;
+    add_usb(name, stamp, path, kind, size);
+}
+
 static void refresh_usb(void)
 {
     struct dirent *ge, *se;
@@ -786,28 +892,24 @@ static void refresh_usb(void)
         if (ge->d_name[0] == '.') continue;
         snprintf(gname, sizeof(gname), "%s", ge->d_name);
         snprintf(path, sizeof(path), ROOT_DIR "/%s", gname);
-        if (!is_dir(path)) continue;
+        if (!is_dir(path)) {                       /* .psu / .max solto dentro de SaveManagerReis */
+            int k = ext_kind(gname);
+            if (k != FMT_DIR) add_pack_file(path, gname, k);
+            continue;
+        }
         s = opendir(path);
         if (!s) continue;
         while ((se = readdir(s)) != NULL && usbCount < MAX_ENT) {
-            Entry *e;
-            int y = 0, mo = 0, d = 0, h = 0, mi = 0, sc = 0;
             char sub[256];
+            int k;
             if (se->d_name[0] == '.') continue;
             snprintf(sub, sizeof(sub), "%s/%s", path, se->d_name);
-            if (!is_dir(sub)) continue;
-            e = &usbList[usbCount++];
-            memset(e, 0, sizeof(*e));
-            snprintf(e->name, sizeof(e->name), "%s", gname);
-            snprintf(e->stamp, sizeof(e->stamp), "%s", se->d_name);
-            if (sscanf(se->d_name, "%d-%d-%d_%d-%d-%d", &y, &mo, &d, &h, &mi, &sc) >= 5) {
-                snprintf(e->date, sizeof(e->date), "%02d/%02d/%02d", d, mo, y % 100);
-                snprintf(e->time, sizeof(e->time), "%02d:%02d", h, mi);
-            } else {
-                snprintf(e->date, sizeof(e->date), "--/--/--");
-                snprintf(e->time, sizeof(e->time), "--:--");
+            if (is_dir(sub)) {
+                if (strlen(sub) < sizeof(((Entry *)0)->path))
+                    add_usb(gname, se->d_name, sub, FMT_DIR, dir_size(sub));
+            } else if ((k = ext_kind(se->d_name)) != FMT_DIR) {
+                add_pack_file(sub, se->d_name, k);
             }
-            e->size = dir_size(sub);
         }
         closedir(s);
     }
@@ -1087,6 +1189,7 @@ static Icon *icon_load(int isUsb, const Entry *e)
     int sl = 0, il = 0, k;
     Icon *ic;
 
+    if (isUsb && e->kind != FMT_DIR) return NULL;     /* .psu/.max: usa o icone da regiao */
     if (isUsb) snprintf(base, sizeof(base), ROOT_DIR "/%s/%s", e->name, e->stamp);
     else       snprintf(base, sizeof(base), "/%s", e->name);
 
@@ -1174,7 +1277,7 @@ static int copy_usb_to_mc(const char *src, const char *dst, const char *label)
 }
 
 /* exporta 1 save do Memory Card -> USB. retorna n de falhas */
-static int export_one(const Entry *e, const char *stamp)
+static int export_folder(const Entry *e, const char *stamp)
 {
     char d1[128], d2[192], src[96], dst[300], lbl[96];
     int i, n, fails = 0;
@@ -1198,7 +1301,7 @@ static int export_one(const Entry *e, const char *stamp)
 }
 
 /* importa 1 backup USB -> Memory Card. retorna n de falhas */
-static int import_one(const Entry *e)
+static int import_folder(const Entry *e)
 {
     char dir[200], src[300], dst[96], lbl[96];
     struct dirent *de;
@@ -1222,6 +1325,388 @@ static int import_one(const Entry *e)
     }
     closedir(d);
     return fails;
+}
+
+/* ============================================================
+ *  Formatos .PSU (EMS / uLaunchELF / mymc) e .MAX (Action Replay MAX)
+ * ============================================================ */
+static int wr_all(int fd, const void *buf, u32 n)
+{
+    const u8 *p = (const u8 *)buf;
+    while (n) {
+        int w = write(fd, p, n > CHUNK ? CHUNK : n);
+        if (w <= 0) return -1;
+        p += w; n -= (u32)w;
+    }
+    return 0;
+}
+
+/* Memory Card -> descritor (copia o arquivo inteiro). retorna bytes ou -1 */
+static int mc_file_to_fd(const char *src, int out, const char *label)
+{
+    int fd = -1, r = 0, total = 0;
+    mcOpen(mcSlot, 0, src, MC_RDONLY);
+    mcSync(0, NULL, &fd);
+    if (fd < 0) return -1;
+    for (;;) {
+        mcRead(fd, iobuf, CHUNK);
+        mcSync(0, NULL, &r);
+        if (r < 0) { total = -1; break; }
+        if (r == 0) break;
+        if (wr_all(out, iobuf, (u32)r) != 0) { total = -1; break; }
+        total += r;
+        g_done += (u32)r;
+        progress(label, g_done, g_total);
+    }
+    mcClose(fd); mcSync(0, NULL, &r);
+    return total;
+}
+
+/* Memory Card -> memoria (exatamente 'size' bytes). 0 = ok */
+static int mc_file_to_mem(const char *src, u8 *dst, u32 size, const char *label)
+{
+    int fd = -1, r = 0;
+    u32 got = 0;
+    mcOpen(mcSlot, 0, src, MC_RDONLY);
+    mcSync(0, NULL, &fd);
+    if (fd < 0) return -1;
+    while (got < size) {
+        u32 want = size - got;
+        if (want > CHUNK) want = CHUNK;
+        mcRead(fd, iobuf, (int)want);
+        mcSync(0, NULL, &r);
+        if (r <= 0) break;
+        memcpy(dst + got, iobuf, (u32)r);
+        got += (u32)r;
+        g_done += (u32)r;
+        progress(label, g_done, g_total);
+    }
+    mcClose(fd); mcSync(0, NULL, &r);
+    return got == size ? 0 : -1;
+}
+
+/* descritor -> Memory Card ('size' bytes). -2 = nao abriu (nada foi lido) */
+static int fd_to_mc(int in, u32 size, const char *dst, const char *label)
+{
+    int fd = -1, r, w = 0, err = 0;
+    u32 left = size;
+    mcOpen(mcSlot, 0, dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
+    mcSync(0, NULL, &fd);
+    if (fd < 0) return -2;
+    while (left) {
+        u32 want = left > CHUNK ? CHUNK : left;
+        r = read(in, iobuf, want);
+        if (r <= 0) { err = -3; break; }
+        mcWrite(fd, iobuf, r);
+        mcSync(0, NULL, &w);
+        if (w != r) { err = -4; break; }
+        left -= (u32)r;
+        g_done += (u32)r;
+        progress(label, g_done, g_total);
+    }
+    mcClose(fd); mcSync(0, NULL, &r);
+    return err;
+}
+
+/* memoria -> Memory Card. -2 = nao abriu */
+static int mem_to_mc(const u8 *src, u32 size, const char *dst, const char *label)
+{
+    int fd = -1, w = 0, r, err = 0;
+    u32 off = 0;
+    mcOpen(mcSlot, 0, dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
+    mcSync(0, NULL, &fd);
+    if (fd < 0) return -2;
+    while (off < size) {
+        u32 n = size - off;
+        if (n > CHUNK) n = CHUNK;
+        memcpy(iobuf, src + off, n);
+        mcWrite(fd, iobuf, (int)n);
+        mcSync(0, NULL, &w);
+        if (w != (int)n) { err = -4; break; }
+        off += n;
+        g_done += n;
+        progress(label, g_done, g_total);
+    }
+    mcClose(fd); mcSync(0, NULL, &r);
+    return err;
+}
+
+static const sceMcTblGetDir *mc_raw(const char *name)
+{
+    int i;
+    for (i = 0; i < mcRawN; i++)
+        if (!strcmp((const char *)mctbl[i].EntryName, name)) return &mctbl[i];
+    return NULL;
+}
+
+/* ---------------- PSU ---------------- */
+/* entrada de 512 bytes: mode(2) ?(2) tamanho(4) criado(8) setor(4) dirent(4) modificado(8) 0(32) nome(448) */
+static void psu_hdr(u8 *h, u32 mode, u32 size, const u8 *cr, const u8 *mo, const char *name)
+{
+    memset(h, 0, 512);
+    st16(h, mode);
+    st32(h + 4, size);
+    if (cr) memcpy(h + 8, cr, 8);
+    if (mo) memcpy(h + 24, mo, 8);
+    snprintf((char *)h + 64, 448, "%s", name);
+}
+
+static int export_psu(const Entry *e, const char *stamp)
+{
+    static const u8 zeros[1024];
+    char d1[128], outp[200], src[96], lbl[96];
+    u8 hdr[512];
+    const sceMcTblGetDir *raw = mc_raw(e->name);
+    const u8 *cr = raw ? (const u8 *)&raw->_Create : NULL;
+    const u8 *mo = raw ? (const u8 *)&raw->_Modify : NULL;
+    int i, n, nf = 0, fd, ok = 1;
+
+    snprintf(src, sizeof(src), "/%s/*", e->name);
+    n = mc_list(mcSlot, src, subtbl, MAX_ENT);
+    for (i = 0; i < n; i++) if (!(subtbl[i].AttrFile & MC_ATTR_DIR)) nf++;
+    if (nf == 0) return 1;
+
+    snprintf(d1, sizeof(d1), ROOT_DIR "/%s", e->name);
+    snprintf(outp, sizeof(outp), "%s/%s.psu", d1, stamp);
+    mkdir(ROOT_DIR, 0777);
+    mkdir(d1, 0777);
+    fd = open(outp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) return 1;
+
+    psu_hdr(hdr, 0x8427, (u32)nf + 2, cr, mo, e->name);  if (wr_all(fd, hdr, 512)) ok = 0;
+    psu_hdr(hdr, 0x8427, 0, cr, mo, ".");                if (wr_all(fd, hdr, 512)) ok = 0;
+    psu_hdr(hdr, 0x8427, 0, cr, mo, "..");               if (wr_all(fd, hdr, 512)) ok = 0;
+
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+    for (i = 0; i < n && ok; i++) {
+        const sceMcTblGetDir *t = &subtbl[i];
+        u32 sz, pad;
+        if (t->AttrFile & MC_ATTR_DIR) continue;
+        sz = t->FileSizeByte;
+        snprintf(src, sizeof(src), "/%s/%s", e->name, (const char *)t->EntryName);
+        psu_hdr(hdr, 0x8497, sz, (const u8 *)&t->_Create, (const u8 *)&t->_Modify, (const char *)t->EntryName);
+        if (wr_all(fd, hdr, 512)) { ok = 0; break; }
+        if (mc_file_to_fd(src, fd, lbl) != (int)sz) { ok = 0; break; }
+        pad = (1024 - (sz & 1023)) & 1023;
+        if (pad && wr_all(fd, zeros, pad)) ok = 0;
+    }
+    close(fd);
+    if (!ok) { unlink(outp); return 1; }
+    return 0;
+}
+
+static int import_psu(const Entry *e)
+{
+    u8 h[512];
+    char dst[96], lbl[96], fname[448];
+    int fd, r = 0, fails = 0;
+
+    fd = open(e->path, O_RDONLY);
+    if (fd < 0) return 1;
+    if (read(fd, h, 512) != 512 || !(ld16(h) & MC_ATTR_DIR)) { close(fd); return 1; }
+
+    snprintf(dst, sizeof(dst), "/%s", e->name);
+    mcMkDir(mcSlot, 0, dst);
+    mcSync(0, NULL, &r);                         /* ja existir nao e erro */
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+
+    while (read(fd, h, 512) == 512) {
+        u32 mode = ld16(h), sz = ld32(h + 4), pad;
+        int rc;
+        if (mode & MC_ATTR_DIR) continue;        /* "." e ".." */
+        memcpy(fname, h + 64, 447);
+        fname[447] = 0;
+        pad = (1024 - (sz & 1023)) & 1023;
+        if (!safe_name(fname)) {
+            fails++;
+            lseek(fd, (off_t)sz + (off_t)pad, SEEK_CUR);
+            continue;
+        }
+        snprintf(dst, sizeof(dst), "/%s/%s", e->name, fname);
+        rc = fd_to_mc(fd, sz, dst, lbl);
+        if (rc == -2) { fails++; lseek(fd, (off_t)sz, SEEK_CUR); }
+        else if (rc < 0) { fails++; break; }     /* fluxo quebrado no meio do arquivo */
+        lseek(fd, (off_t)pad, SEEK_CUR);
+    }
+    close(fd);
+    return fails;
+}
+
+/* ---------------- MAX ---------------- */
+/* cabecalho (0x58 bytes): "Ps2PowerSave"(12) crc32(4) pasta(32) nome(32) tam_comprimido(4) n_arquivos(4)
+ * seguido do fluxo LZARI ([u32 tam_descomprimido][dados]); arquivos: [u32 tam][nome 32][dados][pad p/ 16] */
+static int max_put(void *ctx, const u8 *p, u32 n) { return wr_all(*(int *)ctx, p, n); }
+
+typedef struct { const char *label; u32 base; } MaxTick;
+static void max_tick(void *ctx, u32 pos)
+{
+    MaxTick *t = (MaxTick *)ctx;
+    progress(t->label, t->base + pos, g_total);
+}
+
+static int export_max(const Entry *e, const char *stamp)
+{
+    char d1[128], outp[200], src[96], lbl[96];
+    u8 h[0x58];
+    u8 *arch;
+    u32 archSz = 0, rawSum = 0, p = 0, base, crc = 0, off = 0;
+    int i, n, nf = 0, fd, ok = 1, r;
+    long comp;
+    MaxTick mt;
+
+    snprintf(src, sizeof(src), "/%s/*", e->name);
+    n = mc_list(mcSlot, src, subtbl, MAX_ENT);
+    for (i = 0; i < n; i++) {
+        u32 sz;
+        if (subtbl[i].AttrFile & MC_ATTR_DIR) continue;
+        sz = subtbl[i].FileSizeByte;
+        archSz += 36 + sz;
+        archSz += (16 - ((archSz + 8) & 15)) & 15;
+        rawSum += sz;
+        nf++;
+    }
+    if (nf == 0 || archSz > MAX_ARCH) return 1;
+    arch = (u8 *)malloc(archSz);
+    if (!arch) return 1;
+    memset(arch, 0, archSz);
+
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+    base = g_done;
+    for (i = 0; i < n && ok; i++) {
+        const sceMcTblGetDir *t = &subtbl[i];
+        u32 sz;
+        if (t->AttrFile & MC_ATTR_DIR) continue;
+        sz = t->FileSizeByte;
+        st32(arch + p, sz);
+        snprintf((char *)arch + p + 4, 32, "%s", (const char *)t->EntryName);
+        snprintf(src, sizeof(src), "/%s/%s", e->name, (const char *)t->EntryName);
+        if (mc_file_to_mem(src, arch + p + 36, sz, lbl) != 0) { ok = 0; break; }
+        p += 36 + sz;
+        p += (16 - ((p + 8) & 15)) & 15;
+    }
+    if (!ok) { free(arch); return 1; }
+
+    snprintf(d1, sizeof(d1), ROOT_DIR "/%s", e->name);
+    snprintf(outp, sizeof(outp), "%s/%s.max", d1, stamp);
+    mkdir(ROOT_DIR, 0777);
+    mkdir(d1, 0777);
+    fd = open(outp, O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) { free(arch); return 1; }
+
+    memset(h, 0, sizeof(h));
+    memcpy(h, "Ps2PowerSave", 12);
+    snprintf((char *)h + 0x10, 32, "%s", e->name);
+    snprintf((char *)h + 0x30, 32, "%s", e->name);
+    st32(h + 0x54, (u32)nf);
+    if (wr_all(fd, h, sizeof(h))) ok = 0;
+
+    mt.label = lbl;
+    mt.base = base + rawSum;                     /* a compressao ocupa a 2a metade da barra */
+    if (ok) {
+        comp = lzari_encode(arch, archSz, max_put, &fd, max_tick, &mt);
+        if (comp < 0) ok = 0;
+        else {
+            st32(h, (u32)comp);                  /* tamanho comprimido (inclui o u32 de tamanho) */
+            if (lseek(fd, 0x50, SEEK_SET) != 0x50 || wr_all(fd, h, 4)) ok = 0;
+        }
+    }
+    free(arch);
+
+    if (ok) {                                    /* CRC32 do arquivo inteiro, com o campo do CRC = 0 */
+        lseek(fd, 0, SEEK_SET);
+        for (;;) {
+            r = read(fd, iobuf, CHUNK);
+            if (r <= 0) break;
+            if (off == 0 && r >= 16) memset(iobuf + 12, 0, 4);
+            crc = crc32_update(crc, iobuf, (u32)r);
+            off += (u32)r;
+        }
+        st32(h, crc);
+        if (lseek(fd, 12, SEEK_SET) != 12 || wr_all(fd, h, 4)) ok = 0;
+    }
+    close(fd);
+    g_done = base + 2 * rawSum;
+    if (!ok) { unlink(outp); return 1; }
+    return 0;
+}
+
+static struct { int fd, n, i; u8 buf[CHUNK]; } mrd;
+static int max_get(void *ctx)
+{
+    (void)ctx;
+    if (mrd.i >= mrd.n) {
+        mrd.n = read(mrd.fd, mrd.buf, CHUNK);
+        mrd.i = 0;
+        if (mrd.n <= 0) { mrd.n = 0; return -1; }
+    }
+    return mrd.buf[mrd.i++];
+}
+static void max_dtick(void *ctx, u32 pos)
+{
+    (void)pos;
+    progress((const char *)ctx, g_done, g_total);   /* mantem a tela viva durante a descompressao */
+}
+
+static int import_max(const Entry *e)
+{
+    u8 h[0x5C], *arch;
+    char dst[96], lbl[96], fname[33];
+    u32 nfiles, decSz, p = 0;
+    int fd, r = 0, fails = 0, k;
+    long got;
+
+    fd = open(e->path, O_RDONLY);
+    if (fd < 0) return 1;
+    if (read(fd, h, sizeof(h)) != (int)sizeof(h) || memcmp(h, "Ps2PowerSave", 12) != 0) { close(fd); return 1; }
+    nfiles = ld32(h + 0x54);
+    decSz  = ld32(h + 0x58);
+    if (nfiles == 0 || decSz == 0 || decSz > MAX_ARCH) { close(fd); return 1; }
+    arch = (u8 *)malloc(decSz);
+    if (!arch) { close(fd); return 1; }
+
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+    lseek(fd, 0x58, SEEK_SET);
+    mrd.fd = fd; mrd.n = 0; mrd.i = 0;
+    got = lzari_decode(max_get, NULL, arch, decSz, max_dtick, lbl);
+    close(fd);
+    if (got != (long)decSz) { free(arch); return 1; }
+
+    snprintf(dst, sizeof(dst), "/%s", e->name);
+    mcMkDir(mcSlot, 0, dst);
+    mcSync(0, NULL, &r);
+
+    for (k = 0; k < (int)nfiles; k++) {
+        u32 sz;
+        if (p + 36 > decSz) { fails++; break; }
+        sz = ld32(arch + p);
+        memcpy(fname, arch + p + 4, 32);
+        fname[32] = 0;
+        if (sz > decSz - p - 36) { fails++; break; }
+        if (!safe_name(fname)) fails++;
+        else {
+            snprintf(dst, sizeof(dst), "/%s/%s", e->name, fname);
+            if (mem_to_mc(arch + p + 36, sz, dst, lbl) < 0) fails++;
+        }
+        p += 36 + sz;
+        p += (16 - ((p + 8) & 15)) & 15;
+    }
+    free(arch);
+    return fails;
+}
+
+/* despacho por formato */
+static int export_one(const Entry *e, const char *stamp)
+{
+    if (expFmt == FMT_PSU) return export_psu(e, stamp);
+    if (expFmt == FMT_MAX) return export_max(e, stamp);
+    return export_folder(e, stamp);
+}
+
+static int import_one(const Entry *e)
+{
+    if (e->kind == FMT_PSU) return import_psu(e);
+    if (e->kind == FMT_MAX) return import_max(e);
+    return import_folder(e);
 }
 
 /* ============================================================
@@ -1252,9 +1737,10 @@ static void do_export(void)
 
     g_done = 0; g_total = 0;
     for (i = 0; i < k; i++) g_total += mcList[idx[i]].size;
+    if (expFmt == FMT_MAX) g_total *= 2;           /* leitura + compressao */
     if (g_total == 0) g_total = 1;
 
-    snprintf(ui.title, sizeof(ui.title), "EXPORTANDO PARA USB");
+    snprintf(ui.title, sizeof(ui.title), "EXPORTANDO (%s)", FMT_NAME[expFmt]);
     ui.busy = 1;
     for (i = 0; i < k; i++) fails += export_one(&mcList[idx[i]], stamp);
     ui.busy = 0;
@@ -1303,6 +1789,8 @@ static void do_import(void)
     if (g_total == 0) g_total = 1;
 
     snprintf(ui.title, sizeof(ui.title), "IMPORTANDO PARA MEMORY CARD");
+    if (k == 1 && usbList[idx[0]].kind != FMT_DIR)
+        snprintf(ui.title, sizeof(ui.title), "IMPORTANDO %s", FMT_NAME[usbList[idx[0]].kind]);
     ui.busy = 1;
     for (i = 0; i < k; i++) if (usbList[idx[i]].sel != -1) fails += import_one(&usbList[idx[i]]);
     ui.busy = 0;
@@ -1433,6 +1921,11 @@ int main(int argc, char *argv[])
             if (tab == TAB_USB) refresh_usb();
         }
         if ((pad_new & PAD_SELECT) && tab == TAB_MC) { mcSlot ^= 1; refresh_mc(); }
+        if ((pad_new & PAD_R2) && tab == TAB_MC) {
+            expFmt = (expFmt + 1) % 3;
+            snprintf(ui.toast, sizeof(ui.toast), "Formato de exportacao: %s", FMT_NAME[expFmt]);
+            ui.toastErr = 0; ui.toastT = 120;
+        }
 
         if (tab != TAB_NET) {
             Entry *LL = (tab == TAB_MC) ? mcList : usbList;
