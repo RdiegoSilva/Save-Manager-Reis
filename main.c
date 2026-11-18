@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <malloc.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
@@ -330,7 +331,69 @@ static u64 reg_col(int r)
     }
 }
 
-static void draw_card(float x, float y, float w, float h, const Entry *e, int isCur, int isUsb)
+/* ============================================================
+ *  Icones 3D dos saves (icon.sys + arquivo .ico) -> miniaturas
+ * ============================================================ */
+#define ICON_SZ     64
+#define ICON_SLOTS  16
+#define ICON_ZSIGN  (-1.0f)   /* sentido do eixo Z do .ico em relacao a camera (use 1.0f se aparecer de costas) */
+#define ICON_FLIPY  1.0f      /* use -1.0f se aparecer de cabeca para baixo */
+#define ICON_CA0    0.8776f   /* cos(0.5 rad) - angulo inicial */
+#define ICON_SA0    0.4794f   /* sin(0.5 rad) */
+
+typedef struct {
+    int    n;                 /* vertices (multiplo de 3) */
+    float *pos, *nrm, *uv;    /* normalizados */
+    u8    *col;               /* RGBA por vertice */
+    u16   *tex;               /* 128x128 ABGR1555 (ou NULL) */
+    u32   *thumb;             /* miniatura ICON_SZ x ICON_SZ RGBA8888 */
+    u32    ver;               /* muda a cada render (para reenviar a textura) */
+    u64    bg[4];             /* cores de fundo do icon.sys (4 cantos) */
+} Icon;
+
+static Icon     *icons[2][MAX_ENT];
+static u8        iconFail[2][MAX_ENT];
+static int       gridRows = 3;
+static int       spinTab = -1, spinIdx = -1;
+static float     gCos = ICON_CA0, gSin = ICON_SA0;
+static GSTEXTURE iconTex[ICON_SLOTS];
+static const Icon *slotOwner[ICON_SLOTS];
+static u32       slotVer[ICON_SLOTS];
+
+static void icon_free_all(int t);
+
+static void icon_slots_init(void)
+{
+    int i;
+    for (i = 0; i < ICON_SLOTS; i++) {
+        memset(&iconTex[i], 0, sizeof(GSTEXTURE));
+        iconTex[i].Width  = ICON_SZ;
+        iconTex[i].Height = ICON_SZ;
+        iconTex[i].PSM    = GS_PSM_CT32;
+        iconTex[i].Filter = GS_FILTER_LINEAR;
+        iconTex[i].Vram   = gsKit_vram_alloc(gsGlobal, gsKit_texture_size(ICON_SZ, ICON_SZ, GS_PSM_CT32), GSKIT_ALLOC_USERBUFFER);
+    }
+}
+
+/* desenha a miniatura (envia a textura ao GS so quando mudou) sobre o fundo do icon.sys */
+static void draw_icon(int slot, const Icon *ic, float x, float y, float sz)
+{
+    if (slot < 0 || slot >= ICON_SLOTS) return;
+    if (iconTex[slot].Vram == GSKIT_ALLOC_ERROR) return;
+    if (slotOwner[slot] != ic || slotVer[slot] != ic->ver) {
+        iconTex[slot].Mem = ic->thumb;
+        FlushCache(0);
+        gsKit_texture_upload(gsGlobal, &iconTex[slot]);
+        slotOwner[slot] = ic;
+        slotVer[slot] = ic->ver;
+    }
+    gsKit_prim_quad_gouraud(gsGlobal, x, y, x + sz, y, x, y + sz, x + sz, y + sz, 1,
+                            ic->bg[0], ic->bg[1], ic->bg[2], ic->bg[3]);
+    gsKit_prim_sprite_texture(gsGlobal, &iconTex[slot], x, y, 0.0f, 0.0f, x + sz, y + sz,
+                              (float)ICON_SZ, (float)ICON_SZ, 1, GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x80, 0x00));
+}
+
+static void draw_card(float x, float y, float w, float h, const Entry *e, int isCur, int isUsb, const Icon *ic, int slot)
 {
     char buf[48];
     int r = region_of(e->name);
@@ -343,10 +406,14 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     rect(x, y, w, h, e->sel ? C_CARD_S : C_CARD);
     rect(x, y, w, 3, isUsb ? C_ACC2 : reg_col(r));
 
-    /* icone da regiao */
-    vgrad(x + 8, y + 11, 42, 42, reg_col(r), RGBA(20, 22, 50, 0x80));
-    fill_circle(x + 29, y + 32, 17, RGBA(255, 255, 255, 0x22));
-    ctext(x + 29, y + 22, 0.8f, C_TXT, REG_TAG[r]);
+    /* icone original do save (3D) ou, se nao houver, o icone da regiao */
+    if (ic) {
+        draw_icon(slot, ic, x + 7, y + 10, 44);
+    } else {
+        vgrad(x + 8, y + 11, 42, 42, reg_col(r), RGBA(20, 22, 50, 0x80));
+        fill_circle(x + 29, y + 32, 17, RGBA(255, 255, 255, 0x22));
+        ctext(x + 29, y + 22, 0.8f, C_TXT, REG_TAG[r]);
+    }
 
     /* tamanho / data / hora */
     if (e->size >= 1024 * 1024) snprintf(buf, sizeof(buf), "%u.%u MB", e->size >> 20, ((e->size & 0xFFFFF) * 10) >> 20);
@@ -480,6 +547,7 @@ static void render(void)
         int rows = (int)((H - 58 - top + vgap) / (ch + vgap));
         int cur = cursorPos[tab], curRow = cur / 4, first, last;
         if (rows < 1) rows = 1;
+        gridRows = rows;
         if (curRow < topRow[tab]) topRow[tab] = curRow;
         if (curRow >= topRow[tab] + rows) topRow[tab] = curRow - rows + 1;
         first = topRow[tab] * 4;
@@ -487,7 +555,7 @@ static void render(void)
         if (last > N) last = N;
         for (i = first; i < last; i++) {
             int r = i / 4 - topRow[tab], c = i % 4;
-            draw_card(M + c * (cw + gap), top + r * (ch + vgap), cw, ch, &L[i], i == cur, tab == TAB_USB);
+            draw_card(M + c * (cw + gap), top + r * (ch + vgap), cw, ch, &L[i], i == cur, tab == TAB_USB, icons[tab][i], i - first);
         }
         {
             int totalRows = (N + 3) / 4;
@@ -635,6 +703,7 @@ static void refresh_mc(void)
     int i, j, n, m;
     mcCount = 0;
     cursorPos[TAB_MC] = 0; topRow[TAB_MC] = 0;
+    icon_free_all(TAB_MC);
     mc_check();
     if (!mcReady) return;
     n = mc_list(mcSlot, "/*", mctbl, MAX_ENT);
@@ -708,6 +777,7 @@ static void refresh_usb(void)
     DIR *g, *s;
     usbCount = 0;
     cursorPos[TAB_USB] = 0; topRow[TAB_USB] = 0;
+    icon_free_all(TAB_USB);
     usbOk = usb_ready();
     if (!usbOk) return;
     g = opendir(ROOT_DIR);
@@ -748,6 +818,318 @@ static void refresh_usb(void)
 /* ============================================================
  *  Copia de arquivos
  * ============================================================ */
+/* ============================================================
+ *  Leitura e renderizacao dos icones (.ico do PS2)
+ * ============================================================ */
+static u32 rd32(const u8 *p)  { u32 v; memcpy(&v, p, 4); return v; }
+static u32 rd16(const u8 *p)  { u16 v; memcpy(&v, p, 2); return v; }
+static int rd16s(const u8 *p) { short v; memcpy(&v, p, 2); return v; }
+
+static float fsqrt(float x)
+{
+    float g;
+    int i;
+    if (x <= 0.0f) return 0.0f;
+    g = x > 1.0f ? x * 0.5f : 1.0f;
+    for (i = 0; i < 24; i++) g = 0.5f * (g + x / g);
+    return g;
+}
+
+static void icon_free(Icon *ic)
+{
+    if (!ic) return;
+    free(ic->pos); free(ic->nrm); free(ic->uv); free(ic->col);
+    free(ic->tex); free(ic->thumb);
+    free(ic);
+}
+
+static void icon_free_all(int t)
+{
+    int i;
+    for (i = 0; i < MAX_ENT; i++) { icon_free(icons[t][i]); icons[t][i] = NULL; iconFail[t][i] = 0; }
+    for (i = 0; i < ICON_SLOTS; i++) slotOwner[i] = NULL;
+    spinTab = -1; spinIdx = -1;
+}
+
+/* le um arquivo inteiro (Memory Card ou USB) para a memoria */
+static u8 *read_all(int isUsb, const char *path, int *outLen)
+{
+    int cap = 65536, len = 0, r = 0, fd = -1;
+    u8 *buf = (u8 *)malloc(cap);
+    if (!buf) return NULL;
+    if (isUsb) fd = open(path, O_RDONLY);
+    else { mcOpen(mcSlot, 0, path, MC_RDONLY); mcSync(0, NULL, &fd); }
+    if (fd < 0) { free(buf); return NULL; }
+    for (;;) {
+        if (isUsb) r = read(fd, iobuf, CHUNK);
+        else { mcRead(fd, iobuf, CHUNK); mcSync(0, NULL, &r); }
+        if (r <= 0) break;
+        if (len + r > cap) {
+            u8 *nb;
+            if (cap >= (1 << 20)) break;
+            nb = (u8 *)realloc(buf, cap * 2);
+            if (!nb) break;
+            buf = nb; cap *= 2;
+        }
+        memcpy(buf + len, iobuf, r);
+        len += r;
+    }
+    if (isUsb) close(fd);
+    else { mcClose(fd); mcSync(0, NULL, &r); }
+    if (len <= 0) { free(buf); return NULL; }
+    *outLen = len;
+    return buf;
+}
+
+/* textura RLE: codigo < 0xFF00 = repete 1 pixel; senao copia (0x10000-codigo) pixels */
+static int rle_decode(const u8 *d, int len, int p, u16 *out)
+{
+    int n = 0;
+    while (p + 2 <= len && n < 16384) {
+        u32 code = rd16(d + p);
+        p += 2;
+        if (code < 0xFF00) {
+            u16 px;
+            if (p + 2 > len) return 0;
+            px = (u16)rd16(d + p); p += 2;
+            while (code > 0 && n < 16384) { out[n++] = px; code--; }
+        } else {
+            int cnt = 0x10000 - (int)code;
+            while (cnt-- > 0 && n < 16384) {
+                if (p + 2 > len) return 0;
+                out[n++] = (u16)rd16(d + p); p += 2;
+            }
+        }
+    }
+    return n == 16384;
+}
+
+static Icon *icon_parse(const u8 *d, int len)
+{
+    u32 shapes, attr, nv;
+    int vsz, v;
+    float mn[3] = { 1e9f, 1e9f, 1e9f }, mx[3] = { -1e9f, -1e9f, -1e9f }, c[3], r2 = 0.0f, rad;
+    Icon *ic;
+
+    if (len < 40 || rd32(d) != 0x010000) return NULL;
+    shapes = rd32(d + 4); attr = rd32(d + 8); nv = rd32(d + 16);
+    if (shapes < 1 || shapes > 64 || nv < 3 || nv > 8000 || (nv % 3)) return NULL;
+    vsz = (int)shapes * 8 + 16;                    /* posicoes de cada shape + normal + uv + cor */
+    if (20 + (int)nv * vsz > len) return NULL;
+
+    ic = (Icon *)calloc(1, sizeof(Icon));
+    if (!ic) return NULL;
+    ic->n = (int)nv;
+    ic->pos   = (float *)malloc(nv * 3 * sizeof(float));
+    ic->nrm   = (float *)malloc(nv * 3 * sizeof(float));
+    ic->uv    = (float *)malloc(nv * 2 * sizeof(float));
+    ic->col   = (u8 *)malloc(nv * 4);
+    ic->thumb = (u32 *)memalign(64, ICON_SZ * ICON_SZ * 4);
+    if (!ic->pos || !ic->nrm || !ic->uv || !ic->col || !ic->thumb) { icon_free(ic); return NULL; }
+
+    for (v = 0; v < (int)nv; v++) {
+        const u8 *b = d + 20 + v * vsz;
+        const u8 *nb = b + shapes * 8;
+        int k;
+        for (k = 0; k < 3; k++) {
+            float f = (float)rd16s(b + k * 2);
+            ic->pos[v * 3 + k] = f;
+            ic->nrm[v * 3 + k] = (float)rd16s(nb + k * 2) / 4096.0f;
+            if (f < mn[k]) mn[k] = f;
+            if (f > mx[k]) mx[k] = f;
+        }
+        ic->uv[v * 2]     = (float)rd16s(nb + 8) / 4096.0f;
+        ic->uv[v * 2 + 1] = (float)rd16s(nb + 10) / 4096.0f;
+        memcpy(ic->col + v * 4, nb + 12, 4);
+    }
+    for (v = 0; v < 3; v++) c[v] = (mn[v] + mx[v]) * 0.5f;
+    for (v = 0; v < (int)nv; v++) {
+        float dx = ic->pos[v * 3] - c[0], dy = ic->pos[v * 3 + 1] - c[1], dz = ic->pos[v * 3 + 2] - c[2];
+        float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 > r2) r2 = d2;
+    }
+    rad = fsqrt(r2);
+    if (rad < 1.0f) rad = 1.0f;
+    for (v = 0; v < (int)nv; v++) {
+        ic->pos[v * 3]     = (ic->pos[v * 3]     - c[0]) / rad;
+        ic->pos[v * 3 + 1] = (ic->pos[v * 3 + 1] - c[1]) / rad;
+        ic->pos[v * 3 + 2] = (ic->pos[v * 3 + 2] - c[2]) / rad;
+    }
+
+    /* textura 128x128 (ultimo segmento do arquivo) */
+    if (attr & 4) {
+        u16 *tex = (u16 *)malloc(16384 * sizeof(u16));
+        if (tex) {
+            int ok = 0;
+            if (attr & 8) {                                  /* comprimida (RLE) */
+                int ap = 20 + (int)nv * vsz;
+                if (ap + 20 <= len) {
+                    u32 nf = rd32(d + ap + 16);
+                    int hsz;
+                    for (hsz = 16; hsz >= 8 && !ok; hsz -= 8) {   /* cabecalho de frame real = 16 bytes (id, chaves, 2 desconhecidos); 8 so como reserva */
+                        int p = ap + 20;
+                        u32 f;
+                        for (f = 0; f < nf && f < 4096; f++) {
+                            u32 keys;
+                            if (p + 8 > len) { p = -1; break; }
+                            keys = rd32(d + p + 4);
+                            if (keys > 100000) { p = -1; break; }
+                            p += hsz + (int)keys * 8;
+                        }
+                        /* o u32 antes dos dados e o tamanho comprimido: tem de caber no arquivo (evita decodificar lixo) */
+                        if (p > 0 && p + 4 < len && rd32(d + p) >= 2 && rd32(d + p) <= (u32)(len - p - 4) &&
+                            rle_decode(d, len, p + 4, tex)) ok = 1;
+                    }
+                }
+            } else if (len >= 32768 + 20) {                  /* sem compressao */
+                memcpy(tex, d + len - 32768, 32768);
+                ok = 1;
+            }
+            if (ok) ic->tex = tex; else free(tex);
+        }
+    }
+    return ic;
+}
+
+/* rasteriza o modelo (projecao ortografica, z-buffer, sombreamento simples) na miniatura */
+static void icon_render(Icon *ic, float ca, float sa)
+{
+    static float zb[ICON_SZ * ICON_SZ];
+    const float S = ICON_SZ * 0.46f, C0 = ICON_SZ * 0.5f;
+    const float LX = -0.35f, LY = -0.45f, LZ = 0.82f;
+    u32 *out = ic->thumb;
+    int i, t, k;
+
+    for (i = 0; i < ICON_SZ * ICON_SZ; i++) { out[i] = 0; zb[i] = -1e9f; }
+
+    for (t = 0; t + 2 < ic->n; t += 3) {
+        float sx[3], sy[3], sd[3], it[3], area;
+        float minx, maxx, miny, maxy;
+        int x0, x1, y0, y1, px, py;
+
+        for (k = 0; k < 3; k++) {
+            int v = t + k;
+            const float *p = ic->pos + v * 3, *n = ic->nrm + v * 3;
+            float xr = p[0] * ca + p[2] * sa;
+            float zr = -p[0] * sa + p[2] * ca;
+            float nx = n[0] * ca + n[2] * sa;
+            float nz = -n[0] * sa + n[2] * ca;
+            float ny = n[1];
+            float dt = nx * LX + ny * LY + nz * ICON_ZSIGN * LZ;
+            sx[k] = C0 + xr * S;
+            sy[k] = C0 + p[1] * S * ICON_FLIPY;
+            sd[k] = zr * ICON_ZSIGN;                      /* maior = mais perto */
+            it[k] = (nx * nx + ny * ny + nz * nz < 0.01f) ? 1.0f : 0.55f + 0.75f * (dt > 0.0f ? dt : 0.0f);
+        }
+        area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+        if (area < 1e-4f && area > -1e-4f) continue;
+
+        minx = maxx = sx[0]; miny = maxy = sy[0];
+        for (k = 1; k < 3; k++) {
+            if (sx[k] < minx) minx = sx[k];
+            if (sx[k] > maxx) maxx = sx[k];
+            if (sy[k] < miny) miny = sy[k];
+            if (sy[k] > maxy) maxy = sy[k];
+        }
+        x0 = (int)minx - 1; if (x0 < 0) x0 = 0;
+        y0 = (int)miny - 1; if (y0 < 0) y0 = 0;
+        x1 = (int)maxx + 1; if (x1 > ICON_SZ - 1) x1 = ICON_SZ - 1;
+        y1 = (int)maxy + 1; if (y1 > ICON_SZ - 1) y1 = ICON_SZ - 1;
+
+        for (py = y0; py <= y1; py++) {
+            for (px = x0; px <= x1; px++) {
+                float fx = px + 0.5f, fy = py + 0.5f, w0, w1, w2, d, inten;
+                int idx = py * ICON_SZ + px, r, g, b;
+
+                w0 = ((sx[1] - fx) * (sy[2] - fy) - (sx[2] - fx) * (sy[1] - fy)) / area;
+                w1 = ((sx[2] - fx) * (sy[0] - fy) - (sx[0] - fx) * (sy[2] - fy)) / area;
+                w2 = 1.0f - w0 - w1;
+                if (w0 < -0.01f || w1 < -0.01f || w2 < -0.01f) continue;
+                d = w0 * sd[0] + w1 * sd[1] + w2 * sd[2];
+                if (d <= zb[idx]) continue;
+                zb[idx] = d;
+                inten = w0 * it[0] + w1 * it[1] + w2 * it[2];
+
+                if (ic->tex) {
+                    float uu = w0 * ic->uv[(t) * 2]     + w1 * ic->uv[(t + 1) * 2]     + w2 * ic->uv[(t + 2) * 2];
+                    float vv = w0 * ic->uv[(t) * 2 + 1] + w1 * ic->uv[(t + 1) * 2 + 1] + w2 * ic->uv[(t + 2) * 2 + 1];
+                    int tx = ((int)(uu * 128.0f)) & 127, ty = ((int)(vv * 128.0f)) & 127;
+                    u16 c = ic->tex[ty * 128 + tx];
+                    r = (c & 31) << 3; g = ((c >> 5) & 31) << 3; b = ((c >> 10) & 31) << 3;
+                } else {
+                    r = (int)(w0 * ic->col[t * 4]     + w1 * ic->col[(t + 1) * 4]     + w2 * ic->col[(t + 2) * 4]);
+                    g = (int)(w0 * ic->col[t * 4 + 1] + w1 * ic->col[(t + 1) * 4 + 1] + w2 * ic->col[(t + 2) * 4 + 1]);
+                    b = (int)(w0 * ic->col[t * 4 + 2] + w1 * ic->col[(t + 1) * 4 + 2] + w2 * ic->col[(t + 2) * 4 + 2]);
+                }
+                r = (int)(r * inten); if (r > 255) r = 255;
+                g = (int)(g * inten); if (g > 255) g = 255;
+                b = (int)(b * inten); if (b > 255) b = 255;
+                out[idx] = (u32)r | ((u32)g << 8) | ((u32)b << 16) | (0x80u << 24);
+            }
+        }
+    }
+    ic->ver++;
+}
+
+static void icon_spin(void)
+{
+    const float c0 = 0.99920f, s0 = 0.03999f;          /* ~0.04 rad por quadro */
+    float c = gCos * c0 - gSin * s0, s = gSin * c0 + gCos * s0;
+    float n = c * c + s * s;
+    gCos = c * (1.5f - 0.5f * n);
+    gSin = s * (1.5f - 0.5f * n);
+}
+
+static Icon *icon_load(int isUsb, const Entry *e)
+{
+    char base[200], path[300], iname[65];
+    u8 *sys, *ico;
+    int sl = 0, il = 0, k;
+    Icon *ic;
+
+    if (isUsb) snprintf(base, sizeof(base), ROOT_DIR "/%s/%s", e->name, e->stamp);
+    else       snprintf(base, sizeof(base), "/%s", e->name);
+
+    snprintf(path, sizeof(path), "%s/icon.sys", base);
+    sys = read_all(isUsb, path, &sl);
+    if (!sys) return NULL;
+    if (sl < 0x144 || memcmp(sys, "PS2D", 4) != 0) { free(sys); return NULL; }
+    memcpy(iname, sys + 0x104, 64);
+    iname[64] = 0;
+
+    snprintf(path, sizeof(path), "%s/%s", base, iname);
+    ico = read_all(isUsb, path, &il);
+    if (!ico) { free(sys); return NULL; }
+    ic = icon_parse(ico, il);
+    free(ico);
+    if (ic) {
+        for (k = 0; k < 4; k++) {                      /* cores de fundo dos 4 cantos */
+            u32 r = rd32(sys + 0x10 + k * 16), g = rd32(sys + 0x14 + k * 16), b = rd32(sys + 0x18 + k * 16);
+            if (r > 255) r = 255;
+            if (g > 255) g = 255;
+            if (b > 255) b = 255;
+            ic->bg[k] = RGBA(r, g, b, 0x80);
+        }
+        icon_render(ic, ICON_CA0, ICON_SA0);
+    }
+    free(sys);
+    return ic;
+}
+
+/* carrega 1 icone por quadro (o do cursor primeiro, depois os visiveis) */
+static void icon_pump(int t, Entry *L, int N)
+{
+    int first = topRow[t] * 4, last = first + gridRows * 4, i, c = cursorPos[t];
+    if (last > N) last = N;
+    if (c >= first && c < last && !icons[t][c] && !iconFail[t][c]) i = c;
+    else {
+        for (i = first; i < last; i++) if (!icons[t][i] && !iconFail[t][i]) break;
+        if (i >= last) return;
+    }
+    icons[t][i] = icon_load(t == TAB_USB, &L[i]);
+    if (!icons[t][i]) iconFail[t][i] = 1;
+}
+
 static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
 {
     int fd = -1, r = 0, out, err = 0;
@@ -983,6 +1365,7 @@ static void init_gfx(void)
     font = gsKit_init_fontm();
     gsKit_fontm_upload(gsGlobal, font);
     font->Spacing = 0.62f;
+    icon_slots_init();
 
     gsKit_clear(gsGlobal, RGBA(0, 0, 0, 0x80));
 }
@@ -1050,6 +1433,21 @@ int main(int argc, char *argv[])
             if (tab == TAB_USB) refresh_usb();
         }
         if ((pad_new & PAD_SELECT) && tab == TAB_MC) { mcSlot ^= 1; refresh_mc(); }
+
+        if (tab != TAB_NET) {
+            Entry *LL = (tab == TAB_MC) ? mcList : usbList;
+            int NN = (tab == TAB_MC) ? mcCount : usbCount;
+            if (NN > 0) {
+                int ci = cursorPos[tab];
+                icon_pump(tab, LL, NN);
+                if (spinTab != tab || spinIdx != ci) {            /* cursor mudou: volta o anterior ao angulo fixo */
+                    if (spinTab >= 0 && spinIdx >= 0 && spinIdx < MAX_ENT && icons[spinTab][spinIdx])
+                        icon_render(icons[spinTab][spinIdx], ICON_CA0, ICON_SA0);
+                    spinTab = tab; spinIdx = ci; gCos = ICON_CA0; gSin = ICON_SA0;
+                }
+                if (icons[tab][ci]) { icon_spin(); icon_render(icons[tab][ci], gCos, gSin); }   /* icone selecionado gira */
+            }
+        }
 
         if (ui.toastT > 0) ui.toastT--;
 
