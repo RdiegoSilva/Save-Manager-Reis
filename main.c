@@ -1535,13 +1535,13 @@ static int import_psu(const Entry *e)
 /* ---------------- MAX ---------------- */
 /* cabecalho (0x58 bytes): "Ps2PowerSave"(12) crc32(4) pasta(32) nome(32) tam_comprimido(4) n_arquivos(4)
  * seguido do fluxo LZARI ([u32 tam_descomprimido][dados]); arquivos: [u32 tam][nome 32][dados][pad p/ 16] */
-static int max_put(void *ctx, const u8 *p, u32 n) { return wr_all(*(int *)ctx, p, n); }
+static int max_put(void *ctx, const uint8_t *p, uint32_t n) { return wr_all(*(int *)ctx, p, (u32)n); }
 
 typedef struct { const char *label; u32 base; } MaxTick;
-static void max_tick(void *ctx, u32 pos)
+static void max_tick(void *ctx, uint32_t pos)
 {
     MaxTick *t = (MaxTick *)ctx;
-    progress(t->label, t->base + pos, g_total);
+    progress(t->label, t->base + (u32)pos, g_total);
 }
 
 static int export_max(const Entry *e, const char *stamp)
@@ -1641,7 +1641,7 @@ static int max_get(void *ctx)
     }
     return mrd.buf[mrd.i++];
 }
-static void max_dtick(void *ctx, u32 pos)
+static void max_dtick(void *ctx, uint32_t pos)
 {
     (void)pos;
     progress((const char *)ctx, g_done, g_total);   /* mantem a tela viva durante a descompressao */
