@@ -59,7 +59,7 @@ extern unsigned char usbmass_bd_irx[];   extern unsigned int size_usbmass_bd_irx
 #define MC_WRONLY     0x0002
 #define MC_CREAT      0x0200
 #define MC_TRUNC      0x0400
-#define FW            14.0f            /* largura aproximada de um caractere (escala 1.0) */
+#define FW            16.0f           /* largura de um caractere na escala 1.0 (Spacing 0.62) */
 
 enum { TAB_MC = 0, TAB_USB = 1, TAB_NET = 2 };
 
@@ -79,6 +79,8 @@ enum { TAB_MC = 0, TAB_USB = 1, TAB_NET = 2 };
 #define C_MUTED   RGBA(140, 148, 190, 0x80)
 #define C_DARK    RGBA(10, 12, 28, 0x80)
 #define C_DIM     RGBA(0, 0, 0, 0x50)
+#define C_BLUE   RGBA(90, 140, 255, 0x80)
+#define C_PINK   RGBA(240, 120, 200, 0x80)
 
 /* ---------------- Estruturas ---------------- */
 typedef struct {
@@ -97,7 +99,8 @@ typedef struct {
     char msg[96];
     u32  done, total;
     char toast[96];
-    int  toastT;
+    int    toastT;
+    int    toastErr;
 } UI;
 
 /* ---------------- Globais ---------------- */
@@ -126,6 +129,50 @@ static int pad_hold;
 typedef struct { int y, mo, d, h, mi, s; } Now;
 #define BCD(x) ((((x) >> 4) & 0xF) * 10 + ((x) & 0xF))
 
+/* fuso do usuario em minutos em relacao a UTC (-180 = Brasilia). L2/R2 ajusta. */
+static int tzMin = -180;
+
+static long days_from_civil(int y, int m, int d)
+{
+    long era, yoe, doy, doe;
+    y -= (m <= 2);
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = y - era * 400;
+    doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+static void civil_from_days(long z, int *y, int *m, int *d)
+{
+    long era, doe, yoe, doy, mp;
+    z += 719468;
+    era = (z >= 0 ? z : z - 146096) / 146097;
+    doe = z - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    *y = (int)(yoe + era * 400);
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp = (5 * doy + 2) / 153;
+    *d = (int)(doy - (153 * mp + 2) / 5 + 1);
+    *m = (int)(mp < 10 ? mp + 3 : mp - 9);
+    if (*m <= 2) (*y)++;
+}
+
+/* O relogio e os cartoes do PS2 guardam a hora de TOQUIO (UTC+9). Converte para o fuso local. */
+static void jst_to_local(Now *n)
+{
+    long days = days_from_civil(n->y, n->mo, n->d);
+    long secs = days * 86400L + n->h * 3600L + n->mi * 60L + n->s;
+    secs += (long)(tzMin - 540) * 60L;
+    days = secs / 86400L;
+    secs = secs % 86400L;
+    if (secs < 0) { secs += 86400L; days--; }
+    civil_from_days(days, &n->y, &n->mo, &n->d);
+    n->h  = (int)(secs / 3600);
+    n->mi = (int)((secs % 3600) / 60);
+    n->s  = (int)(secs % 60);
+}
+
 static void get_now(Now *n)
 {
     sceCdCLOCK c;
@@ -137,12 +184,16 @@ static void get_now(Now *n)
         n->h  = BCD(c.hour);
         n->mi = BCD(c.minute);
         n->s  = BCD(c.second);
+        jst_to_local(n);
     }
 }
 
 /* ============================================================
  *  Desenho
  * ============================================================ */
+static Now clk;
+static int clkT;
+
 static void rect(float x, float y, float w, float h, u64 c)
 {
     gsKit_prim_sprite(gsGlobal, x, y, x + w, y + h, 1, c);
@@ -178,6 +229,75 @@ static void trunc_copy(char *dst, const char *src, int max)
     dst[max - 2] = '.'; dst[max - 1] = '.'; dst[max] = 0;
 }
 
+/* corta o texto para caber em maxw pixels */
+static void fit(char *dst, const char *src, float maxw, float scale)
+{
+    int max = (int)(maxw / (FW * scale));
+    if (max < 4) max = 4;
+    if (max > 38) max = 38;
+    trunc_copy(dst, src, max);
+}
+
+/* ---- formas simples feitas de sprites ---- */
+static void fill_circle(float cx, float cy, int r, u64 c)
+{
+    int dy, hw;
+    for (dy = -r; dy <= r; dy++) {
+        hw = 0;
+        while ((hw + 1) * (hw + 1) + dy * dy <= r * r) hw++;
+        rect(cx - hw, cy + dy, 2 * hw + 1, 1, c);
+    }
+}
+
+static void fill_tri(float cx, float cy, int r, u64 c)
+{
+    int i;
+    for (i = 0; i <= 2 * r; i++)
+        rect(cx - i / 2, cy - r + i, 2 * (i / 2) + 1, 1, c);
+}
+
+/* botao do controle (18x18): kind 0=X 1=quadrado 2=triangulo 3=circulo */
+static void pad_btn(float x, float y, int kind, u64 col)
+{
+    int i;
+    fill_circle(x + 9, y + 9, 9, col);
+    switch (kind) {
+    case 0:
+        for (i = -4; i <= 4; i++) {
+            rect(x + 8 + i, y + 8 + i, 2, 2, C_DARK);
+            rect(x + 8 + i, y + 8 - i, 2, 2, C_DARK);
+        }
+        break;
+    case 1:
+        rect(x + 5, y + 5, 8, 2, C_DARK);  rect(x + 5, y + 11, 8, 2, C_DARK);
+        rect(x + 5, y + 5, 2, 8, C_DARK);  rect(x + 11, y + 5, 2, 8, C_DARK);
+        break;
+    case 2:
+        fill_tri(x + 9, y + 9, 5, C_DARK);
+        break;
+    default:
+        fill_circle(x + 9, y + 9, 5, C_DARK);
+        fill_circle(x + 9, y + 9, 3, col);
+        break;
+    }
+}
+
+static float key_btn(float x, float y, int kind, u64 col, const char *label)
+{
+    pad_btn(x, y, kind, col);
+    text(x + 24, y + 3, 0.45f, C_TXT, label);
+    return x + 24 + tw(label, 0.45f) + 18;
+}
+
+static float key_pill(float x, float y, const char *keys, const char *label)
+{
+    float w = tw(keys, 0.38f) + 12;
+    rect(x, y, w, 18, C_CARD);
+    text(x + 6, y + 4, 0.38f, C_ACC, keys);
+    text(x + w + 6, y + 3, 0.45f, C_TXT, label);
+    return x + w + 6 + tw(label, 0.45f) + 18;
+}
+
 /* ---- regiao do jogo a partir do nome da pasta ---- */
 static int region_of(const char *n)
 {
@@ -189,8 +309,7 @@ static int region_of(const char *n)
     }
     return 4;
 }
-static const char *REG_TAG[] = { "US", "EU", "JP", "KR", "??" };
-static const char *REG_LBL[] = { "NTSC-U", "PAL", "NTSC-J", "NTSC-K", "Outro" };
+static const char *REG_TAG[] = { "US", "EU", "JP", "KR", "?" };
 
 static u64 reg_col(int r)
 {
@@ -214,99 +333,136 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
         rect(x - 3, y - 3, w + 6, h + 6, RGBA(0, 140 + a * 4, 255, 0x80));
     }
     rect(x, y, w, h, e->sel ? C_CARD_S : C_CARD);
+    rect(x, y, w, 3, isUsb ? C_ACC2 : reg_col(r));
 
-    /* icone (placeholder colorido por regiao) */
-    vgrad(x + 10, y + 10, 52, 52, reg_col(r), RGBA(20, 22, 50, 0x80));
-    ctext(x + 36, y + 24, 0.95f, C_TXT, REG_TAG[r]);
+    /* icone da regiao */
+    vgrad(x + 8, y + 11, 42, 42, reg_col(r), RGBA(20, 22, 50, 0x80));
+    ctext(x + 29, y + 22, 0.8f, C_TXT, REG_TAG[r]);
 
     /* tamanho / data / hora */
     if (e->size >= 1024 * 1024) snprintf(buf, sizeof(buf), "%u.%u MB", e->size >> 20, ((e->size & 0xFFFFF) * 10) >> 20);
     else                         snprintf(buf, sizeof(buf), "%u KB", (e->size + 1023) >> 10);
-    text(x + 70, y + 10, 0.50f, C_ACC, buf);
-    text(x + 70, y + 27, 0.50f, C_TXT, e->date);
-    text(x + 70, y + 44, 0.50f, C_MUTED, e->time);
+    text(x + 58, y + 10, 0.50f, C_ACC, buf);
+    text(x + 58, y + 26, 0.45f, C_TXT, e->date);
+    text(x + 58, y + 40, 0.45f, C_MUTED, e->time);
 
     /* nome */
-    trunc_copy(buf, e->name, 15);
-    text(x + 10, y + 72, 0.58f, C_TXT, buf);
-    text(x + 10, y + 90, 0.46f, isUsb ? C_ACC2 : C_MUTED, isUsb ? "BACKUP USB" : REG_LBL[r]);
+    fit(buf, e->name, w - 16, 0.50f);
+    text(x + 8, y + 58, 0.50f, C_TXT, buf);
 
-    /* marcado */
     if (e->sel) {
-        rect(x + w - 24, y + 6, 18, 18, C_GREEN);
-        ctext(x + w - 15, y + 8, 0.55f, C_DARK, "OK");
+        rect(x + w - 22, y + 8, 16, 16, C_GREEN);
+        ctext(x + w - 14, y + 11, 0.38f, C_DARK, "OK");
     }
 }
 
 static void render(void)
 {
     const float W = (float)gsGlobal->Width, H = (float)gsGlobal->Height;
-    static Now now; static int nowT = 0;
-    char buf[160];
+    const float M = 24.0f;
+    char buf[96], buf2[48];
     Entry *L = (tab == TAB_MC) ? mcList : usbList;
     int N = (tab == TAB_MC) ? mcCount : usbCount;
     int i, marked = 0;
+    float x;
 
-    if (nowT-- <= 0) { get_now(&now); nowT = 30; }
+    if (clkT-- <= 0) { get_now(&clk); clkT = 30; }
 
+    gsKit_clear(gsGlobal, RGBA(7, 8, 20, 0x80));
     vgrad(0, 0, W, H, C_BG_T, C_BG_B);
 
     /* ---- cabecalho ---- */
-    rect(0, 0, W, 50, C_BAR);
-    hgrad(0, 50, W, 3, C_ACC, C_ACC2);
-    hgrad(14, 9, 32, 32, C_ACC, C_ACC2);
-    ctext(30, 12, 0.95f, C_DARK, "R");
-    text(56, 8, 0.85f, C_TXT, APP_NAME);
-    text(58, 30, 0.45f, C_MUTED, "Gerenciador de saves  " APP_VERSION);
-    if (now.y) snprintf(buf, sizeof(buf), "%02d/%02d/%04d  %02d:%02d:%02d", now.d, now.mo, now.y, now.h, now.mi, now.s);
-    else       snprintf(buf, sizeof(buf), "--/--/----  --:--:--");
-    text(W - tw(buf, 0.62f) - 16, 16, 0.62f, C_ACC, buf);
+    rect(0, 0, W, 54, C_BAR);
+    hgrad(0, 54, W, 3, C_ACC, C_ACC2);
+    hgrad(M, 10, 34, 34, C_ACC, C_ACC2);
+    ctext(M + 17, 16, 0.9f, C_TXT, "R");
+    text(M + 46, 7, 0.78f, C_TXT, APP_NAME);
+    text(M + 48, 33, 0.40f, C_MUTED, "Gerenciador de saves  " APP_VERSION);
+    if (clk.y) {
+        snprintf(buf, sizeof(buf), "%02d:%02d", clk.h, clk.mi);
+        snprintf(buf2, sizeof(buf2), "%02d/%02d/%04d  GMT%+d", clk.d, clk.mo, clk.y, tzMin / 60);
+    } else {
+        snprintf(buf, sizeof(buf), "--:--");
+        snprintf(buf2, sizeof(buf2), "--/--/----");
+    }
+    text(W - M - tw(buf, 0.85f), 5, 0.85f, C_ACC, buf);
+    text(W - M - tw(buf2, 0.40f), 34, 0.40f, C_MUTED, buf2);
 
     /* ---- abas ---- */
     {
         static const char *names[3] = { "MEMORY CARD", "USB / HD", "REDE" };
-        static const float wd[3] = { 150, 120, 90 };
-        float tx = 21;
+        x = M;
         for (i = 0; i < 3; i++) {
-            if (i == tab) { hgrad(tx, 60, wd[i], 26, C_ACC, C_ACC2); ctext(tx + wd[i] / 2, 64, 0.62f, C_DARK, names[i]); }
-            else          { rect(tx, 60, wd[i], 26, C_CARD);          ctext(tx + wd[i] / 2, 64, 0.62f, C_MUTED, names[i]); }
-            tx += wd[i] + 8;
+            float w = tw(names[i], 0.55f) + 26;
+            if (i == tab) { hgrad(x, 64, w, 24, C_ACC, C_ACC2); text(x + 13, 69, 0.55f, C_DARK, names[i]); }
+            else          { rect(x, 64, w, 24, C_CARD);         text(x + 13, 69, 0.55f, C_MUTED, names[i]); }
+            x += w + 8;
         }
+    }
+    if (tab == TAB_MC) {
+        float bx = W - M - 60;
+        text(bx - 8 - tw("SLOT", 0.45f), 70, 0.45f, C_MUTED, "SLOT");
+        for (i = 0; i < 2; i++) {
+            float sx = bx + i * 32;
+            if (i == mcSlot) { hgrad(sx, 64, 28, 24, C_ACC, C_ACC2); ctext(sx + 14, 69, 0.55f, C_DARK, i ? "2" : "1"); }
+            else             { rect(sx, 64, 28, 24, C_CARD);         ctext(sx + 14, 69, 0.55f, C_MUTED, i ? "2" : "1"); }
+        }
+    } else if (tab == TAB_USB) {
+        const char *s = usbOk ? "USB CONECTADO" : "SEM USB";
+        float w = tw(s, 0.45f);
+        fill_circle(W - M - w - 12, 76, 4, usbOk ? C_GREEN : C_RED);
+        text(W - M - w, 70, 0.45f, usbOk ? C_GREEN : C_RED, s);
     }
 
     for (i = 0; i < N; i++) marked += L[i].sel;
 
-    /* ---- linha de informacao ---- */
-    if (tab == TAB_MC) {
-        if (mcReady) snprintf(buf, sizeof(buf), "Slot %d  |  %d saves  |  %d marcados  |  Livre: %d KB", mcSlot + 1, mcCount, marked, mcFreeKB);
-        else         snprintf(buf, sizeof(buf), "Slot %d  |  Memory Card nao encontrado", mcSlot + 1);
-    } else if (tab == TAB_USB) {
-        if (usbOk) snprintf(buf, sizeof(buf), "%s  |  %d backups  |  %d marcados", ROOT_DIR, usbCount, marked);
-        else       snprintf(buf, sizeof(buf), "Pendrive / HD USB nao detectado (O = atualizar)");
-    } else {
-        snprintf(buf, sizeof(buf), "Transferencia pela rede (SMB)");
+    /* ---- quadros de resumo ---- */
+    if (tab != TAB_NET) {
+        const float tgap = 10, tile = (W - 2 * M - 2 * tgap) / 3.0f;
+        const char *lab[3];
+        char val[3][32];
+        if (tab == TAB_MC) {
+            lab[0] = "SAVES"; lab[1] = "MARCADOS"; lab[2] = "LIVRE";
+            snprintf(val[0], 32, "%d", mcCount);
+            snprintf(val[1], 32, "%d", marked);
+            if (mcReady) snprintf(val[2], 32, "%d.%d MB", mcFreeKB / 1024, (mcFreeKB % 1024) * 10 / 1024);
+            else         snprintf(val[2], 32, "--");
+        } else {
+            lab[0] = "BACKUPS"; lab[1] = "MARCADOS"; lab[2] = "PASTA";
+            snprintf(val[0], 32, "%d", usbCount);
+            snprintf(val[1], 32, "%d", marked);
+            snprintf(val[2], 32, "SaveManagerReis");
+        }
+        for (i = 0; i < 3; i++) {
+            float tx = M + i * (tile + tgap);
+            rect(tx, 96, tile, 26, C_CARD);
+            rect(tx, 96, 3, 26, i == 1 ? C_GREEN : C_ACC);
+            text(tx + 11, 103, 0.40f, C_MUTED, lab[i]);
+            text(tx + tile - 8 - tw(val[i], 0.50f), 102, 0.50f, C_TXT, val[i]);
+        }
     }
-    text(21, 92, 0.52f, C_MUTED, buf);
 
     /* ---- grade de cards ---- */
     if (tab == TAB_NET) {
-        rect(21, 112, W - 42, 150, C_CARD);
-        ctext(W / 2, 140, 0.9f, C_TXT, "REDE (SMB) - EM BREVE");
-        ctext(W / 2, 176, 0.55f, C_MUTED, "Envio/recebimento de saves por rede local");
-        ctext(W / 2, 196, 0.55f, C_MUTED, "ficara disponivel na proxima versao.");
+        rect(M, 110, W - 2 * M, 150, C_CARD);
+        rect(M, 110, W - 2 * M, 3, C_ACC2);
+        ctext(W / 2, 140, 0.8f, C_TXT, "REDE (SMB)  -  EM BREVE");
+        ctext(W / 2, 178, 0.48f, C_MUTED, "Envio e recebimento de saves pela rede local");
+        ctext(W / 2, 198, 0.48f, C_MUTED, "ficara disponivel na proxima versao.");
     } else if (N == 0) {
-        rect(21, 112, W - 42, 110, C_CARD);
+        rect(M, 134, W - 2 * M, 120, C_CARD);
+        rect(M, 134, W - 2 * M, 3, C_ACC);
         if (tab == TAB_MC) {
-            ctext(W / 2, 140, 0.75f, C_TXT, mcReady ? "Nenhum save neste Memory Card" : "Insira um Memory Card");
-            ctext(W / 2, 176, 0.52f, C_MUTED, "SELECT troca entre slot 1 e slot 2");
+            ctext(W / 2, 160, 0.75f, C_TXT, mcReady ? "Nenhum save neste Memory Card" : "Insira um Memory Card");
+            ctext(W / 2, 200, 0.48f, C_MUTED, "SELECT troca entre slot 1 e slot 2");
         } else {
-            ctext(W / 2, 140, 0.75f, C_TXT, usbOk ? "Nenhum backup ainda" : "Conecte um pendrive / HD USB");
-            ctext(W / 2, 176, 0.52f, C_MUTED, usbOk ? "Exporte um save na aba MEMORY CARD (TRIANGULO)" : "Depois pressione O para atualizar");
+            ctext(W / 2, 160, 0.75f, C_TXT, usbOk ? "Nenhum backup ainda" : "Conecte um pendrive / HD USB");
+            ctext(W / 2, 200, 0.48f, C_MUTED, usbOk ? "Exporte um save na aba MEMORY CARD" : "Depois pressione O para atualizar");
         }
     } else {
-        const float cw = 142, ch = 110, gap = 10, top = 108;
-        const float x0 = (W - (4 * cw + 3 * gap)) / 2;
-        int rows = (int)((H - 52 - top + gap) / (ch + gap));
+        const float gap = 10, vgap = 8, top = 130, ch = 78;
+        const float cw = (W - 2 * M - 3 * gap) / 4.0f;
+        int rows = (int)((H - 58 - top + vgap) / (ch + vgap));
         int cur = cursorPos[tab], curRow = cur / 4, first, last;
         if (rows < 1) rows = 1;
         if (curRow < topRow[tab]) topRow[tab] = curRow;
@@ -316,32 +472,43 @@ static void render(void)
         if (last > N) last = N;
         for (i = first; i < last; i++) {
             int r = i / 4 - topRow[tab], c = i % 4;
-            draw_card(x0 + c * (cw + gap), top + r * (ch + gap), cw, ch, &L[i], i == cur, tab == TAB_USB);
+            draw_card(M + c * (cw + gap), top + r * (ch + vgap), cw, ch, &L[i], i == cur, tab == TAB_USB);
         }
-        /* barra de rolagem */
         {
             int totalRows = (N + 3) / 4;
             if (totalRows > rows) {
-                float th = (H - 52 - top), bh = th * rows / totalRows;
-                rect(W - 10, top, 4, th, C_CARD);
-                rect(W - 10, top + (th - bh) * topRow[tab] / (totalRows - rows), 4, bh, C_ACC);
+                float th = rows * (ch + vgap) - vgap, bh = th * rows / totalRows;
+                rect(W - 14, top, 4, th, C_CARD);
+                rect(W - 14, top + (th - bh) * topRow[tab] / (totalRows - rows), 4, bh, C_ACC);
             }
         }
     }
 
     /* ---- rodape ---- */
-    rect(0, H - 40, W, 40, C_BAR);
-    hgrad(0, H - 40, W, 2, C_ACC2, C_ACC);
-    if (tab == TAB_MC)       text(14, H - 28, 0.48f, C_MUTED, "X:Marcar  []:Todos  /\\:Exportar p/ USB  O:Atualizar  L1/R1:Aba  SELECT:Slot  START:Sair");
-    else if (tab == TAB_USB) text(14, H - 28, 0.48f, C_MUTED, "X:Marcar  []:Todos  /\\:Importar p/ Memory Card  O:Atualizar  L1/R1:Aba  START:Sair");
-    else                     text(14, H - 28, 0.48f, C_MUTED, "L1/R1:Trocar aba  START:Sair");
+    rect(0, H - 56, W, 56, C_BAR);
+    hgrad(0, H - 56, W, 2, C_ACC2, C_ACC);
+    if (tab == TAB_NET) {
+        x = key_pill(M, H - 40, "L1/R1", "Trocar aba");
+        key_pill(x, H - 40, "START", "Sair");
+    } else {
+        x = M;
+        x = key_btn(x, H - 50, 0, C_BLUE, "Marcar");
+        x = key_btn(x, H - 50, 1, C_PINK, "Todos");
+        x = key_btn(x, H - 50, 2, C_GREEN, tab == TAB_MC ? "Exportar p/ USB" : "Importar p/ Memory Card");
+        x = key_btn(x, H - 50, 3, C_RED, "Atualizar");
+        x = M;
+        x = key_pill(x, H - 30, "L1/R1", "Abas");
+        if (tab == TAB_MC) x = key_pill(x, H - 30, "SELECT", "Slot");
+        x = key_pill(x, H - 30, "L2/R2", "Fuso");
+        key_pill(x, H - 30, "START", "Sair");
+    }
 
     /* ---- aviso (toast) ---- */
     if (ui.toastT > 0) {
-        float bw = tw(ui.toast, 0.55f) + 30;
-        rect((W - bw) / 2 + 2, H - 78, bw, 28, C_SHADOW);
-        rect((W - bw) / 2, H - 80, bw, 28, C_GREEN);
-        ctext(W / 2, H - 74, 0.55f, C_DARK, ui.toast);
+        float bw = tw(ui.toast, 0.50f) + 30;
+        rect((W - bw) / 2 + 2, H - 94, bw, 26, C_SHADOW);
+        rect((W - bw) / 2, H - 96, bw, 26, ui.toastErr ? C_RED : C_GREEN);
+        ctext(W / 2, H - 90, 0.50f, C_DARK, ui.toast);
     }
 
     /* ---- janela de progresso / confirmacao ---- */
@@ -351,15 +518,16 @@ static void render(void)
         rect(bx + 4, by + 5, 440, 130, C_SHADOW);
         rect(bx, by, 440, 130, C_BAR);
         hgrad(bx, by, 440, 4, C_ACC, C_ACC2);
-        ctext(W / 2, by + 16, 0.8f, C_TXT, ui.title);
-        ctext(W / 2, by + 50, 0.52f, C_MUTED, ui.msg);
+        ctext(W / 2, by + 16, 0.7f, C_TXT, ui.title);
+        ctext(W / 2, by + 52, 0.48f, C_MUTED, ui.msg);
         if (ui.busy) {
             float pct = ui.total ? (float)ui.done / (float)ui.total : 0.0f;
             if (pct > 1.0f) pct = 1.0f;
-            rect(bx + 30, by + 88, 380, 16, C_CARD);
-            hgrad(bx + 30, by + 88, 380 * pct, 16, C_ACC, C_ACC2);
+            rect(bx + 30, by + 92, 380, 16, C_CARD);
+            hgrad(bx + 30, by + 92, 380 * pct, 16, C_ACC, C_ACC2);
         } else {
-            ctext(W / 2, by + 92, 0.55f, C_ACC, "X: Sim      O: Nao");
+            key_btn(W / 2 - 100, by + 92, 0, C_BLUE, "Sim");
+            key_btn(W / 2 + 20, by + 92, 3, C_RED, "Nao");
         }
     }
 }
@@ -382,6 +550,7 @@ static void progress(const char *msg, u32 done, u32 total)
 static void toast(const char *fmt, int n)
 {
     snprintf(ui.toast, sizeof(ui.toast), fmt, n);
+    ui.toastErr = (strstr(ui.toast, "alha") || strstr(ui.toast, "nao ") || strstr(ui.toast, "Conecte") || strstr(ui.toast, "Sem ")) ? 1 : 0;
     ui.toastT = 240;
 }
 
@@ -464,8 +633,14 @@ static void refresh_mc(void)
         e = &mcList[mcCount++];
         memset(e, 0, sizeof(*e));
         snprintf(e->name, sizeof(e->name), "%s", (char *)t->EntryName);
-        snprintf(e->date, sizeof(e->date), "%02d/%02d/%02d", t->_Modify.Day, t->_Modify.Month, t->_Modify.Year % 100);
-        snprintf(e->time, sizeof(e->time), "%02d:%02d", t->_Modify.Hour, t->_Modify.Min);
+        {
+            Now mt;
+            mt.y = t->_Modify.Year; mt.mo = t->_Modify.Month; mt.d = t->_Modify.Day;
+            mt.h = t->_Modify.Hour; mt.mi = t->_Modify.Min;   mt.s = t->_Modify.Sec;
+            if (mt.y >= 2000) jst_to_local(&mt);
+            snprintf(e->date, sizeof(e->date), "%02d/%02d/%02d", mt.d, mt.mo, mt.y % 100);
+            snprintf(e->time, sizeof(e->time), "%02d:%02d", mt.h, mt.mi);
+        }
         snprintf(pat, sizeof(pat), "/%s/*", e->name);
         m = mc_list(mcSlot, pat, subtbl, MAX_ENT);
         for (j = 0; j < m; j++)
@@ -559,6 +734,27 @@ static void refresh_usb(void)
 /* ============================================================
  *  Copia de arquivos
  * ============================================================ */
+/* ---- configuracao (fuso horario) salva no pendrive ---- */
+static void cfg_load(void)
+{
+    FILE *f = fopen(ROOT_DIR "/config.ini", "r");
+    int v;
+    if (!f) return;
+    if (fscanf(f, "tz=%d", &v) == 1 && v >= -720 && v <= 840) tzMin = v;
+    fclose(f);
+}
+
+static void cfg_save(void)
+{
+    FILE *f;
+    if (!usb_ready()) return;
+    mkdir(ROOT_DIR, 0777);
+    f = fopen(ROOT_DIR "/config.ini", "w");
+    if (!f) return;
+    fprintf(f, "tz=%d\n", tzMin);
+    fclose(f);
+}
+
 static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
 {
     int fd = -1, r = 0, out, err = 0;
@@ -777,7 +973,7 @@ static void init_iop(void)
 static void init_gfx(void)
 {
     gsGlobal = gsKit_init_global();
-    gsGlobal->PSM = GS_PSM_CT24;
+    gsGlobal->PSM = GS_PSM_CT32;
     gsGlobal->PSMZ = GS_PSMZ_16S;
     gsGlobal->ZBuffering = GS_SETTING_OFF;
     gsGlobal->DoubleBuffering = GS_SETTING_ON;
@@ -786,12 +982,13 @@ static void init_gfx(void)
     dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
     dmaKit_chan_init(DMA_CHANNEL_GIF);
 
+    gsGlobal->Test->ZTST = 1;                 /* Z-test sempre passa (sem Z-buffer) */
     gsKit_init_screen(gsGlobal);
     gsKit_mode_switch(gsGlobal, GS_ONESHOT);
 
     font = gsKit_init_fontm();
     gsKit_fontm_upload(gsGlobal, font);
-    font->Spacing = 0.80f;
+    font->Spacing = 0.62f;
 }
 
 int main(int argc, char *argv[])
@@ -821,6 +1018,7 @@ int main(int argc, char *argv[])
     }
     ui.busy = 0;
 
+    cfg_load();
     refresh_mc();
     refresh_usb();
 
@@ -856,6 +1054,15 @@ int main(int argc, char *argv[])
             if (tab == TAB_USB) refresh_usb();
         }
         if ((pad_new & PAD_SELECT) && tab == TAB_MC) { mcSlot ^= 1; refresh_mc(); }
+
+        if (pad_new & (PAD_L2 | PAD_R2)) {
+            tzMin += (pad_new & PAD_R2) ? 60 : -60;
+            if (tzMin < -720) tzMin = -720;
+            if (tzMin > 840)  tzMin = 840;
+            cfg_save();
+            clkT = 0;
+            if (mcReady) refresh_mc();
+        }
 
         if (ui.toastT > 0) ui.toastT--;
 
