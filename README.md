@@ -1,5 +1,7 @@
 # SAVE MANAGER REIS — homebrew para PS2
 
+Criado por **Diego Reis**.
+
 Gerenciador de saves com interface estilo dashboard.
 
 ## O que faz
@@ -78,6 +80,7 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
 - **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para outro slot, direto, sem passar pelo USB. Com multitap, pergunta qual slot é o destino. Avisa se o save já existe e confere o espaço livre.
 - **Som: Ligado/Desligado:** liga e desliga os efeitos sonoros.
+- **Créditos:** mostra a versão e o autor (Diego Reis).
 - **Acertar data e hora:** edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
 - **Backup de tudo para USB:** pergunta o formato (Pasta, PSU ou MAX) e exporta todos os saves nele.

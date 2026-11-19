@@ -1,6 +1,7 @@
 /*
  * ============================================================
  *   SAVE MANAGER REIS  -  homebrew para PlayStation 2
+ *   Criado por Diego Reis
  * ------------------------------------------------------------
  *   - Lista os saves do Memory Card (slot 1 / slot 2) em um
  *     dashboard com cards organizados (icone, nome, tamanho,
@@ -116,7 +117,7 @@ typedef struct {
     int    toastT;
     int    toastErr;
     int    menu, mn, msel;          /* menu de opcoes (modal com lista) */
-    const char *mitem[10];
+    const char *mitem[12];
     int    extraN;                  /* linhas extras no modal de confirmacao (0..3) */
     char   extra[3][96];
     u64    extraCol[3];
@@ -500,7 +501,7 @@ static void render(void)
     hgrad(M, 10, 34, 34, C_ACC, C_ACC2);
     ctext(M + 17, 16, 0.9f, C_TXT, "R");
     text(M + 46, 7, 0.78f, C_TXT, APP_NAME);
-    text(M + 48, 33, 0.40f, C_MUTED, "Gerenciador de saves  " APP_VERSION);
+    text(M + 48, 33, 0.40f, C_MUTED, "Gerenciador de saves  " APP_VERSION "  -  por Diego Reis");
     if (clk.y) {
         snprintf(buf, sizeof(buf), "%02d:%02d", clk.h, clk.mi);
         {
@@ -835,7 +836,7 @@ static int menu_run(const char *title, const char **items, int n)
 {
     int res = -2, k;
     snprintf(ui.title, sizeof(ui.title), "%s", title);
-    for (k = 0; k < n && k < 10; k++) ui.mitem[k] = items[k];
+    for (k = 0; k < n && k < 12; k++) ui.mitem[k] = items[k];
     ui.mn = n; ui.msel = 0; ui.menu = 1;
     while (res == -2) {
         read_pad();
@@ -3125,7 +3126,7 @@ static void tool_clock(void)
 static void do_mc_tools(void)
 {
     char soundLabel[24];
-    const char *items[10] = {
+    const char *items[11] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -3135,12 +3136,13 @@ static void do_mc_tools(void)
         "Formatar Memory Card",
         NULL,
         "Acertar data e hora",
+        "Creditos",
         "Sair do aplicativo"
     };
     int c;
     snprintf(soundLabel, sizeof(soundLabel), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
     items[7] = soundLabel;
-    c = menu_run("FERRAMENTAS", items, 10);
+    c = menu_run("FERRAMENTAS", items, 11);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) {
         snd_set(!snd_enabled());
@@ -3150,6 +3152,15 @@ static void do_mc_tools(void)
     }
     if (c == 8) { tool_clock(); return; }
     if (c == 9) {
+        snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
+        snprintf(ui.extra[1], sizeof(ui.extra[1]), "Criado por Diego Reis");
+        ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
+        ui.extraN = 2;
+        info("SAVE MANAGER REIS " APP_VERSION, "Creditos");
+        ui.extraN = 0;
+        return;
+    }
+    if (c == 10) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) quitReq = 1;
         return;
     }
