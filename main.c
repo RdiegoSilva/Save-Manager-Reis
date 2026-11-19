@@ -110,6 +110,8 @@ typedef struct {
     char toast[96];
     int    toastT;
     int    toastErr;
+    int    menu, mn, msel;          /* menu de opcoes (modal com lista) */
+    const char *mitem[8];
 } UI;
 
 /* ---------------- Globais ---------------- */
@@ -128,7 +130,7 @@ static sceMcTblGetDir subtbl[MAX_ENT] __attribute__((aligned(64)));
 static u8   iobuf[CHUNK]              __attribute__((aligned(64)));
 static char padbuf[256]               __attribute__((aligned(64)));
 
-static int expFmt = FMT_DIR, convFmt = FMT_PSU, mcRawN = 0;
+static int expFmt = FMT_DIR, convFmt = FMT_PSU, mcRawN = 0, mcNoFmt = 0;
 static const char *FMT_NAME[] = { "Pasta", "PSU", "MAX" };
 
 static u32 g_done, g_total;
@@ -558,7 +560,7 @@ static void render(void)
         rect(M, 134, W - 2 * M, 120, C_CARD);
         rect(M, 134, W - 2 * M, 3, C_ACC);
         if (tab == TAB_MC) {
-            ctext(W / 2, 160, 0.75f, C_TXT, mcReady ? "Nenhum save neste Memory Card" : "Insira um Memory Card");
+            ctext(W / 2, 160, 0.75f, C_TXT, mcReady ? "Nenhum save neste Memory Card" : (mcNoFmt ? "Cartao nao formatado ou corrompido" : "Insira um Memory Card"));
             ctext(W / 2, 200, 0.48f, C_MUTED, "SELECT troca entre slot 1 e slot 2");
         } else {
             ctext(W / 2, 160, 0.75f, C_TXT, usbOk ? "Nenhum backup ainda" : "Conecte um pendrive / HD USB");
@@ -614,6 +616,7 @@ static void render(void)
             char fl[32];
             snprintf(fl, sizeof(fl), "Formato: %s", FMT_NAME[expFmt]);
             x = key_pill(x, H - 30, "R2", fl);
+            x = key_pill(x, H - 30, "L2", "Ferramentas");
             x = key_pill(x, H - 30, "SELECT", "Slot");
         }
         if (tab == TAB_USB) x = key_pill(x, H - 30, "L2", "Converter p/ Pasta");
@@ -634,7 +637,21 @@ static void render(void)
     }
 
     /* ---- janela de progresso / confirmacao ---- */
-    if (ui.busy || ui.modal) {
+    if (ui.menu) {
+        float mw = 500, mh = 70 + ui.mn * 26, mx = (W - mw) / 2, my = (H - mh) / 2 - 10;
+        int k;
+        rect(0, 0, W, H, C_DIM);
+        rect(mx + 4, my + 5, mw, mh, C_SHADOW);
+        rect(mx, my, mw, mh, C_BAR);
+        hgrad(mx, my, mw, 4, C_ACC, C_ACC2);
+        ctext(W / 2, my + 14, 0.65f, C_TXT, ui.title);
+        for (k = 0; k < ui.mn; k++) {
+            float iy = my + 46 + k * 26;
+            if (k == ui.msel) { hgrad(mx + 14, iy, mw - 28, 22, C_ACC, C_ACC2); text(mx + 24, iy + 4, 0.48f, C_DARK, ui.mitem[k]); }
+            else              { rect(mx + 14, iy, mw - 28, 22, C_CARD);         text(mx + 24, iy + 4, 0.48f, C_TXT, ui.mitem[k]); }
+        }
+        text(mx + 14, my + mh - 18, 0.38f, C_MUTED, "X escolher    O voltar");
+    } else if (ui.busy || ui.modal) {
         float bx = (W - 440) / 2, by = (H - 130) / 2;
         rect(0, 0, W, H, C_DIM);
         rect(bx + 4, by + 5, 440, 130, C_SHADOW);
@@ -647,6 +664,8 @@ static void render(void)
             if (pct > 1.0f) pct = 1.0f;
             rect(bx + 30, by + 92, 380, 16, C_CARD);
             hgrad(bx + 30, by + 92, 380 * pct, 16, C_ACC, C_ACC2);
+        } else if (ui.modal == 2) {
+            key_btn(W / 2 - 30, by + 92, 0, C_BLUE, "OK");
         } else {
             key_btn(W / 2 - 100, by + 92, 0, C_BLUE, "Sim");
             key_btn(W / 2 + 20, by + 92, 3, C_RED, "Nao");
@@ -715,6 +734,41 @@ static int confirm(const char *title, const char *msg)
     return res;
 }
 
+static void info(const char *title, const char *msg)
+{
+    int done = 0;
+    snprintf(ui.title, sizeof(ui.title), "%s", title);
+    snprintf(ui.msg, sizeof(ui.msg), "%s", msg);
+    ui.modal = 2;
+    while (!done) {
+        read_pad();
+        if (pad_new & (PAD_CROSS | PAD_CIRCLE)) done = 1;
+        render();
+        present();
+    }
+    ui.modal = 0;
+}
+
+/* menu de opcoes: retorna o indice escolhido ou -1 (cancelado) */
+static int menu_run(const char *title, const char **items, int n)
+{
+    int res = -2, k;
+    snprintf(ui.title, sizeof(ui.title), "%s", title);
+    for (k = 0; k < n && k < 8; k++) ui.mitem[k] = items[k];
+    ui.mn = n; ui.msel = 0; ui.menu = 1;
+    while (res == -2) {
+        read_pad();
+        if (pad_new & PAD_UP)    ui.msel = (ui.msel + n - 1) % n;
+        if (pad_new & PAD_DOWN)  ui.msel = (ui.msel + 1) % n;
+        if (pad_new & PAD_CROSS) res = ui.msel;
+        if (pad_new & PAD_CIRCLE) res = -1;
+        render();
+        present();
+    }
+    ui.menu = 0;
+    return res;
+}
+
 /* ============================================================
  *  Memory Card
  * ============================================================ */
@@ -735,6 +789,7 @@ static void mc_check(void)
     mcSync(0, NULL, &ret);
     mcReady = (ret >= -1) && (ret != -2) ? 1 : 0;
     if (ret == -1) mcReady = (fmt != 0);
+    mcNoFmt = (ret == -2) || (ret == -1 && fmt == 0);
     mcFreeKB = mcReady ? freec : 0;
 }
 
@@ -2073,6 +2128,83 @@ static int convert_entry(const Entry *e, int target)
     return rc;
 }
 
+/* ---------------- Ferramentas do Memory Card (baixo nivel) ---------------- */
+static char badName[MAX_ENT][40];
+static int  badN;
+
+/* le o arquivo inteiro e confere o tamanho. 1 = ok */
+static int mc_read_check(const char *path, u32 expect)
+{
+    int fd = -1, r = 0;
+    u32 total = 0;
+    mcOpen(mcSlot, 0, path, MC_RDONLY);
+    mcSync(0, NULL, &fd);
+    if (fd < 0) return 0;
+    for (;;) {
+        mcRead(fd, iobuf, CHUNK);
+        mcSync(0, NULL, &r);
+        if (r < 0) { total = 0xFFFFFFFFu; break; }
+        if (r == 0) break;
+        total += (u32)r;
+    }
+    mcClose(fd); mcSync(0, NULL, &r);
+    return total == expect;
+}
+
+/* verifica todos os saves de mcList: precisa de icon.sys e de todos os arquivos legiveis.
+ * preenche badName/badN e devolve quantos tem problema */
+static int mc_verify(void)
+{
+    int i, j, n;
+    char pat[64], path[96];
+    badN = 0;
+    for (i = 0; i < mcCount; i++) {
+        int hasIcon = 0, nf = 0, ok = 1;
+        progress(mcList[i].name, (u32)i, (u32)(mcCount ? mcCount : 1));
+        snprintf(pat, sizeof(pat), "/%s/*", mcList[i].name);
+        n = mc_list(mcSlot, pat, subtbl, MAX_ENT);
+        for (j = 0; j < n; j++) {
+            if (subtbl[j].AttrFile & MC_ATTR_DIR) continue;
+            nf++;
+            if (!strcmp((const char *)subtbl[j].EntryName, "icon.sys")) hasIcon = 1;
+            snprintf(path, sizeof(path), "/%s/%s", mcList[i].name, (const char *)subtbl[j].EntryName);
+            if (!mc_read_check(path, subtbl[j].FileSizeByte)) ok = 0;
+        }
+        if (!hasIcon || nf == 0) ok = 0;
+        if (!ok && badN < MAX_ENT) snprintf(badName[badN++], sizeof(badName[0]), "%s", mcList[i].name);
+    }
+    return badN;
+}
+
+/* apaga uma pasta de save (arquivos e depois a pasta). retorna numero de falhas */
+static int mc_delete_save(const char *name)
+{
+    char pat[64], path[96];
+    int n, j, r = 0, fails = 0;
+    snprintf(pat, sizeof(pat), "/%s/*", name);
+    n = mc_list(mcSlot, pat, subtbl, MAX_ENT);
+    for (j = 0; j < n; j++) {
+        if (subtbl[j].AttrFile & MC_ATTR_DIR) continue;
+        snprintf(path, sizeof(path), "/%s/%s", name, (const char *)subtbl[j].EntryName);
+        mcDelete(mcSlot, 0, path);
+        mcSync(0, NULL, &r);
+        if (r < 0) fails++;
+    }
+    snprintf(path, sizeof(path), "/%s", name);
+    mcDelete(mcSlot, 0, path);
+    mcSync(0, NULL, &r);
+    if (r < 0) fails++;
+    return fails;
+}
+
+static int mc_format_card(void)
+{
+    int r = 0;
+    mcFormat(mcSlot, 0);
+    mcSync(0, NULL, &r);
+    return r;
+}
+
 /* despacho por formato */
 static int export_one(const Entry *e, const char *stamp)
 {
@@ -2227,6 +2359,151 @@ static void do_convert_tab(void)
     else       toast("%d save(s) convertido(s)", n);
 }
 
+/* ---- Ferramentas do Memory Card (interface) ---- */
+static void mark_all_mc(void)
+{
+    int i;
+    for (i = 0; i < mcCount; i++) mcList[i].sel = 1;
+}
+
+/* oferece backup completo (PSU) no USB. 1 = pode continuar */
+static int backup_before(void)
+{
+    int oldFmt = expFmt, ok = 1;
+    if (!mcReady || mcCount == 0 || !usb_ready()) return 1;
+    if (!confirm("FAZER BACKUP ANTES?", "Salvar todos os saves em PSU no USB (recomendado)")) return 1;
+    mark_all_mc();
+    expFmt = FMT_PSU;
+    ui.toastErr = 0;
+    do_export();
+    expFmt = oldFmt;
+    if (ui.toastErr) ok = confirm("BACKUP COM FALHAS", "Continuar mesmo assim?");
+    return ok;
+}
+
+static void tool_format(void)
+{
+    char m[96];
+    int r;
+    if (!backup_before()) return;
+    snprintf(m, sizeof(m), "Apaga TODOS os saves do slot %d. Continuar?", mcSlot + 1);
+    if (!confirm("FORMATAR MEMORY CARD", m)) return;
+    if (!confirm("ULTIMO AVISO", "Isso NAO pode ser desfeito. Formatar mesmo?")) return;
+    snprintf(ui.title, sizeof(ui.title), "FORMATANDO MEMORY CARD");
+    ui.busy = 1;
+    progress("Aguarde, nao remova o cartao...", 0, 1);
+    r = mc_format_card();
+    ui.busy = 0;
+    refresh_mc();
+    if (r >= 0 && mcReady) toast("Memory Card formatado%.0d", 0);
+    else                   toast("Falha ao formatar (erro %d)", r);
+}
+
+static void tool_verify(void)
+{
+    int bad, i;
+    char m[96];
+    if (!mcReady || mcCount == 0) { toast("Nenhum save para verificar%.0d", 0); return; }
+    snprintf(ui.title, sizeof(ui.title), "VERIFICANDO SAVES");
+    ui.busy = 1;
+    bad = mc_verify();
+    ui.busy = 0;
+    if (bad == 0) {
+        snprintf(m, sizeof(m), "%d save(s) verificado(s): nenhum problema", mcCount);
+        info("VERIFICACAO CONCLUIDA", m);
+        return;
+    }
+    m[0] = 0;
+    for (i = 0; i < bad; i++) {
+        if (strlen(m) + strlen(badName[i]) > 70) { strcat(m, "..."); break; }
+        if (i) strcat(m, ", ");
+        strcat(m, badName[i]);
+    }
+    {
+        char t[48];
+        snprintf(t, sizeof(t), "%d SAVE(S) COM PROBLEMA", bad);
+        info(t, m);
+    }
+    if (confirm("APAGAR OS COM PROBLEMA?", "Remove do cartao os saves listados antes")) {
+        int fails = 0;
+        for (i = 0; i < bad; i++) fails += mc_delete_save(badName[i]);
+        refresh_mc();
+        if (fails) toast("Concluido com %d falha(s)", fails);
+        else       toast("%d save(s) apagado(s)", bad);
+    }
+}
+
+static void tool_delete(void)
+{
+    int idx[MAX_ENT], k, i, fails = 0;
+    char m[96];
+    if (!mcReady) { toast("Memory Card nao encontrado%.0d", 0); return; }
+    k = gather(mcList, mcCount, idx);
+    if (k == 0) return;
+    if (!backup_before()) return;
+    if (k == 1) snprintf(m, sizeof(m), "Apagar %s? Nao pode ser desfeito.", mcList[idx[0]].name);
+    else        snprintf(m, sizeof(m), "Apagar %d saves? Nao pode ser desfeito.", k);
+    if (!confirm("APAGAR SAVES", m)) return;
+    {
+        char names[MAX_ENT][40];
+        for (i = 0; i < k; i++) snprintf(names[i], sizeof(names[0]), "%s", mcList[idx[i]].name);
+        for (i = 0; i < k; i++) fails += mc_delete_save(names[i]);
+    }
+    for (i = 0; i < mcCount; i++) mcList[i].sel = 0;
+    refresh_mc();
+    if (fails) toast("Concluido com %d falha(s)", fails);
+    else       toast("%d save(s) apagado(s)", k);
+}
+
+static void tool_recover(void)
+{
+    int t;
+    snprintf(ui.title, sizeof(ui.title), "LENDO MEMORY CARD");
+    ui.busy = 1;
+    for (t = 0; t < 4; t++) {
+        progress("Tentando ler o cartao de novo...", (u32)t, 4);
+        refresh_mc();
+        if (mcReady) break;
+    }
+    ui.busy = 0;
+    if (mcReady) {
+        info("CARTAO LIDO COM SUCESSO", "Use Verificar saves para achar saves corrompidos");
+        return;
+    }
+    if (mcNoFmt) {
+        info("CARTAO NAO LEGIVEL", "Sistema de arquivos ausente ou danificado");
+        if (confirm("FORMATAR AGORA?", "Recria o sistema de arquivos (apaga tudo)")) tool_format();
+    } else {
+        info("SEM MEMORY CARD", "Verifique o cartao e o slot e tente de novo");
+    }
+}
+
+static void do_mc_tools(void)
+{
+    const char *items[5] = {
+        "Verificar saves (detectar corrompidos)",
+        "Apagar saves marcados",
+        "Backup de tudo para USB (PSU)",
+        "Recuperar cartao ilegivel / corrompido",
+        "Formatar Memory Card"
+    };
+    int c = menu_run("FERRAMENTAS DO MEMORY CARD", items, 5);
+    if (c == 0) tool_verify();
+    else if (c == 1) tool_delete();
+    else if (c == 2) {
+        int oldFmt = expFmt;
+        mark_all_mc();
+        expFmt = FMT_PSU;
+        do_export();
+        expFmt = oldFmt;
+    }
+    else if (c == 3) tool_recover();
+    else if (c == 4) {
+        if (!mcReady && !mcNoFmt) { toast("Memory Card nao encontrado%.0d", 0); return; }
+        tool_format();
+    }
+}
+
 /* ============================================================
  *  Inicializacao
  * ============================================================ */
@@ -2349,6 +2626,7 @@ int main(int argc, char *argv[])
         }
         if ((pad_new & PAD_SELECT) && tab == TAB_MC) { mcSlot ^= 1; refresh_mc(); }
         if ((pad_new & PAD_L2) && tab == TAB_USB && usbCount > 0) do_convert();
+        if ((pad_new & PAD_L2) && tab == TAB_MC) do_mc_tools();
         if ((pad_new & PAD_R2) && tab == TAB_CONV) {
             convFmt = (convFmt + 1) % 3;
             snprintf(ui.toast, sizeof(ui.toast), "Converter para: %s", FMT_NAME[convFmt]);
