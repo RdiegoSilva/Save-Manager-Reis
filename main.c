@@ -130,6 +130,7 @@ static sceMcTblGetDir subtbl[MAX_ENT] __attribute__((aligned(64)));
 static u8   iobuf[CHUNK]              __attribute__((aligned(64)));
 static char padbuf[256]               __attribute__((aligned(64)));
 
+static int quitReq = 0;
 static int expFmt = FMT_DIR, convFmt = FMT_PSU, mcRawN = 0, mcNoFmt = 0;
 static const char *FMT_NAME[] = { "Pasta", "PSU", "MAX" };
 
@@ -597,7 +598,7 @@ static void render(void)
     hgrad(0, H - 56, W, 2, C_ACC2, C_ACC);
     if (tab == TAB_NET) {
         x = key_pill(M, H - 40, "L1/R1", "Trocar aba");
-        key_pill(x, H - 40, "START", "Sair");
+        key_pill(x, H - 40, "START", "Menu");
     } else {
         x = M;
         x = key_btn(x, H - 50, 0, C_BLUE, "Marcar");
@@ -616,16 +617,15 @@ static void render(void)
             char fl[32];
             snprintf(fl, sizeof(fl), "Formato: %s", FMT_NAME[expFmt]);
             x = key_pill(x, H - 30, "R2", fl);
-            x = key_pill(x, H - 30, "L2", "Ferramentas");
-            x = key_pill(x, H - 30, "SELECT", "Slot");
         }
-        if (tab == TAB_USB) x = key_pill(x, H - 30, "L2", "Converter p/ Pasta");
+        x = key_pill(x, H - 30, "L2", "Slot");
+        x = key_pill(x, H - 30, "SELECT", "Atualizar");
         if (tab == TAB_CONV) {
             char fl[32];
             snprintf(fl, sizeof(fl), "Destino: %s", FMT_NAME[convFmt]);
             x = key_pill(x, H - 30, "R2", fl);
         }
-        key_pill(x, H - 30, "START", "Sair");
+        key_pill(x, H - 30, "START", "Menu");
     }
 
     /* ---- aviso (toast) ---- */
@@ -1811,7 +1811,7 @@ static void conv_dir(const Entry *e, char *dir, int n)
     mkdir(dir, 0777);
 }
 
-static int convert_psu(const Entry *e)
+__attribute__((unused)) static int convert_psu(const Entry *e)
 {
     u8 h[512];
     char dir[200], dst[300], lbl[96], fname[448];
@@ -1839,7 +1839,7 @@ static int convert_psu(const Entry *e)
     return fails;
 }
 
-static int convert_max(const Entry *e)
+__attribute__((unused)) static int convert_max(const Entry *e)
 {
     u8 h[0x5C], *arch;
     char dir[200], dst[300], lbl[96], fname[33];
@@ -2205,6 +2205,59 @@ static int mc_format_card(void)
     return r;
 }
 
+/* copia uma pasta de save entre as duas portas de Memory Card. retorna numero de falhas */
+static int mc_copy_save(const char *name, int srcPort, int dstPort, const char *label)
+{
+    char pat[64], sp[96];
+    int n, j, r = 0, fails = 0;
+    snprintf(pat, sizeof(pat), "/%s/*", name);
+    n = mc_list(srcPort, pat, subtbl, MAX_ENT);
+    snprintf(sp, sizeof(sp), "/%s", name);
+    mcMkDir(dstPort, 0, sp);
+    mcSync(0, NULL, &r);                              /* ja existir nao e erro */
+    for (j = 0; j < n; j++) {
+        int in = -1, out = -1, w = 0, err = 0;
+        char f[96];
+        if (subtbl[j].AttrFile & MC_ATTR_DIR) continue;
+        snprintf(f, sizeof(f), "/%s/%s", name, (const char *)subtbl[j].EntryName);
+        mcOpen(srcPort, 0, f, MC_RDONLY);
+        mcSync(0, NULL, &in);
+        if (in < 0) { fails++; continue; }
+        mcOpen(dstPort, 0, f, MC_WRONLY | MC_CREAT | MC_TRUNC);
+        mcSync(0, NULL, &out);
+        if (out < 0) { mcClose(in); mcSync(0, NULL, &r); fails++; continue; }
+        for (;;) {
+            mcRead(in, iobuf, CHUNK);
+            mcSync(0, NULL, &r);
+            if (r < 0) { err = 1; break; }
+            if (r == 0) break;
+            mcWrite(out, iobuf, r);
+            mcSync(0, NULL, &w);
+            if (w != r) { err = 1; break; }
+            g_done += (u32)r;
+            progress(label, g_done, g_total);
+        }
+        mcClose(in);  mcSync(0, NULL, &r);
+        mcClose(out); mcSync(0, NULL, &r);
+        if (err) fails++;
+    }
+    return fails;
+}
+
+/* o Memory Card da porta indicada esta legivel? devolve KB livres em *freeKB */
+static int mc_port_ready(int port, int *freeKB)
+{
+    int type, freec = 0, fmt = 0, ret = -10, ok;
+    mcGetInfo(port, 0, &type, &freec, &fmt);
+    mcSync(0, NULL, &ret);
+    mcGetInfo(port, 0, &type, &freec, &fmt);
+    mcSync(0, NULL, &ret);
+    ok = (ret >= -1) && (ret != -2);
+    if (ret == -1) ok = (fmt != 0);
+    *freeKB = ok ? freec : 0;
+    return ok;
+}
+
 /* despacho por formato */
 static int export_one(const Entry *e, const char *stamp)
 {
@@ -2312,7 +2365,7 @@ static void do_import(void)
     else       toast("%d save(s) importado(s) com sucesso", k);
 }
 
-static void do_convert(void)
+__attribute__((unused)) static void do_convert(void)
 {
     int idx[MAX_ENT], k, i, n = 0, fails = 0;
     if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB%.0d", 0); return; }
@@ -2478,27 +2531,75 @@ static void tool_recover(void)
     }
 }
 
+static void tool_copy(void)
+{
+    int idx[MAX_ENT], k, i, fails = 0, copied = 0, dst = mcSlot ^ 1, freeKB = 0;
+    u32 need = 0;
+    char m[96];
+    if (!mcReady) { toast("Memory Card nao encontrado%.0d", 0); return; }
+    k = gather(mcList, mcCount, idx);
+    if (k == 0) return;
+    if (!mc_port_ready(dst, &freeKB)) { toast("Falha: slot %d sem Memory Card legivel", dst + 1); return; }
+    for (i = 0; i < k; i++) need += mcList[idx[i]].size + 3072;     /* margem p/ clusters e pasta */
+    if (need / 1024 > (u32)freeKB) { toast("Falha: sem espaco no slot %d", dst + 1); return; }
+    snprintf(m, sizeof(m), "Copiar %d save(s) do slot %d para o slot %d?", k, mcSlot + 1, dst + 1);
+    if (!confirm("COPIAR PARA OUTRO CARTAO", m)) return;
+
+    g_done = 0; g_total = 0;
+    for (i = 0; i < k; i++) g_total += mcList[idx[i]].size;
+    if (g_total == 0) g_total = 1;
+    snprintf(ui.title, sizeof(ui.title), "COPIANDO SLOT %d PARA SLOT %d", mcSlot + 1, dst + 1);
+    for (i = 0; i < k; i++) {
+        Entry *e = &mcList[idx[i]];
+        char pat[64];
+        sceMcTblGetDir one[2];
+        int exists;
+        snprintf(pat, sizeof(pat), "/%s", e->name);
+        exists = mc_list(dst, pat, one, 2) > 0;
+        if (exists) {
+            snprintf(m, sizeof(m), "%s ja existe no slot %d. Sobrescrever?", e->name, dst + 1);
+            if (!confirm("SAVE JA EXISTE", m)) continue;
+        }
+        ui.busy = 1;
+        fails += mc_copy_save(e->name, mcSlot, dst, e->name);
+        ui.busy = 0;
+        copied++;
+    }
+    for (i = 0; i < mcCount; i++) mcList[i].sel = 0;
+    if (fails)       toast("Concluido com %d falha(s)", fails);
+    else if (copied) toast("%d save(s) copiado(s) para o outro cartao", copied);
+    else             toast("Nada copiado%.0d", 0);
+}
+
 static void do_mc_tools(void)
 {
-    const char *items[5] = {
+    const char *items[7] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
+        "Copiar marcados para o outro Memory Card",
         "Backup de tudo para USB (PSU)",
         "Recuperar cartao ilegivel / corrompido",
-        "Formatar Memory Card"
+        "Formatar Memory Card",
+        "Sair do aplicativo"
     };
-    int c = menu_run("FERRAMENTAS DO MEMORY CARD", items, 5);
+    int c = menu_run("FERRAMENTAS", items, 7);
+    if (c >= 0 && c <= 5) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
+    if (c == 6) {
+        if (confirm("SAIR", "Fechar o Save Manager Reis?")) quitReq = 1;
+        return;
+    }
     if (c == 0) tool_verify();
     else if (c == 1) tool_delete();
-    else if (c == 2) {
+    else if (c == 2) tool_copy();
+    else if (c == 3) {
         int oldFmt = expFmt;
         mark_all_mc();
         expFmt = FMT_PSU;
         do_export();
         expFmt = oldFmt;
     }
-    else if (c == 3) tool_recover();
-    else if (c == 4) {
+    else if (c == 4) tool_recover();
+    else if (c == 5) {
         if (!mcReady && !mcNoFmt) { toast("Memory Card nao encontrado%.0d", 0); return; }
         tool_format();
     }
@@ -2598,7 +2699,7 @@ int main(int argc, char *argv[])
         L = (tab == TAB_MC) ? mcList : usbList;
         N = (tab == TAB_MC) ? mcCount : usbCount;
 
-        if (pad_new & PAD_START) break;
+        if (pad_new & PAD_START) { do_mc_tools(); if (quitReq) break; }
         if (pad_new & PAD_R1) tab = (tab + 1) % 4;
         if (pad_new & PAD_L1) tab = (tab + 3) % 4;
 
@@ -2624,9 +2725,13 @@ int main(int argc, char *argv[])
             if (tab == TAB_MC)  refresh_mc();
             if (tab == TAB_USB || tab == TAB_CONV) refresh_usb();
         }
-        if ((pad_new & PAD_SELECT) && tab == TAB_MC) { mcSlot ^= 1; refresh_mc(); }
-        if ((pad_new & PAD_L2) && tab == TAB_USB && usbCount > 0) do_convert();
-        if ((pad_new & PAD_L2) && tab == TAB_MC) do_mc_tools();
+        if (pad_new & PAD_SELECT) { refresh_mc(); refresh_usb(); toast("Lista atualizada%.0d", 0); }
+        if (pad_new & PAD_L2) {
+            mcSlot ^= 1;
+            refresh_mc();
+            snprintf(ui.toast, sizeof(ui.toast), "Memory Card slot %d", mcSlot + 1);
+            ui.toastErr = 0; ui.toastT = 120;
+        }
         if ((pad_new & PAD_R2) && tab == TAB_CONV) {
             convFmt = (convFmt + 1) % 3;
             snprintf(ui.toast, sizeof(ui.toast), "Converter para: %s", FMT_NAME[convFmt]);

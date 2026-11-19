@@ -10,7 +10,7 @@ Gerenciador de saves com interface estilo dashboard.
 - **Importa** pendrive / HD USB → Memory Card (pergunta antes de sobrescrever).
 - **Converte direto** nos formatos **PSU** e **MAX** (exportar e importar), além da pasta normal.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
-- **Ferramentas do Memory Card** (L2 na aba Memory Card): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
+- **Ferramentas do Memory Card** (START): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
 - Aba **CONVERTER**: Pasta ⇄ PSU ⇄ MAX direto no pendrive.
 - Aba **REDE (SMB)**: reservada, ainda não implementada.
 
@@ -61,20 +61,20 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Triângulo | Exportar (aba Memory Card) / Importar (aba USB) |
 | Círculo | Atualizar a lista |
 | L1 / R1 | Trocar de aba (Memory Card / USB / Converter / Rede) |
-| SELECT | Alternar slot 1 / slot 2 do Memory Card |
-| L2 | Converter .psu/.max marcados para pasta (aba USB) |
-| L2 | Ferramentas do Memory Card (aba Memory Card) |
+| SELECT | Atualizar tudo (reler Memory Card e USB) |
+| L2 | Alternar slot 1 / slot 2 do Memory Card |
 | R2 | Escolher o formato: exportação (aba Memory Card) ou destino (aba Converter) |
-| START | Sair |
+| START | Menu de ferramentas (inclui Sair) |
 
 Sem nenhum card marcado, a ação vale para o card selecionado.
 
 ## Ferramentas do Memory Card
 
-Na aba **MEMORY CARD**, aperte **L2**. Funciona também com cartão não formatado.
+Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O menu também tem **Sair do aplicativo**.
 
 - **Verificar saves:** lê todos os arquivos de cada save e confere se existe `icon.sys`. Lista os que têm problema e oferece apagá-los.
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
+- **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para o outro slot, direto, sem passar pelo USB. Avisa se o save já existe e confere o espaço livre.
 - **Backup de tudo para USB (PSU):** exporta todos os saves em PSU.
 - **Recuperar cartão ilegível / corrompido:** tenta ler o cartão 4 vezes. Se continuar ilegível, oferece formatar.
 - **Formatar Memory Card:** oferece backup em PSU no USB, pede confirmação duas vezes e então formata o slot atual.
