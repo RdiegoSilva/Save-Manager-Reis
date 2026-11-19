@@ -10,6 +10,7 @@ Gerenciador de saves com interface estilo dashboard.
 - **Importa** pendrive / HD USB → Memory Card (pergunta antes de sobrescrever).
 - **Converte direto** nos formatos **PSU** e **MAX** (exportar e importar), além da pasta normal.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
+- Aba **CONVERTER**: Pasta ⇄ PSU ⇄ MAX direto no pendrive.
 - Aba **REDE (SMB)**: reservada, ainda não implementada.
 
 ## Como os backups ficam organizados no pendrive
@@ -42,7 +43,7 @@ nunca sobrescreve backups antigos (exceto dentro do mesmo segundo).
   (a etiqueta PSU / MAX aparece no card). Para importar um save baixado da
   internet, basta colocar o `.psu` ou `.max` dentro de `mass:/SaveManagerReis/`
   (solto ou dentro de uma subpasta) e apertar **O** para atualizar.
-- **Converter para pasta:** na aba USB, marque os `.psu`/`.max` e aperte **L2**. Eles são extraídos para o formato Pasta (`SaveManagerReis/<SAVE>/<nome-do-arquivo>/`), sem usar o Memory Card.
+- **Aba CONVERTER:** converte entre **Pasta, PSU e MAX** em qualquer direção, só no pendrive (sem Memory Card). Marque os backups com **X**, escolha o destino com **R2** e aperte **Triângulo**. Backups que já estão no formato de destino são ignorados. O resultado fica ao lado do original, em `SaveManagerReis/<SAVE>/<nome>.psu`, `.max` ou pasta `<nome>/`.
 - O nome do save é lido de dentro do arquivo, não do nome do arquivo.
 - Saves em PSU/MAX mostram o ícone da região (o ícone 3D só aparece nos backups em Pasta).
 - Limite: um `.max` descomprimido pode ter até 24 MB.
@@ -58,10 +59,10 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Quadrado | Marcar / desmarcar todos |
 | Triângulo | Exportar (aba Memory Card) / Importar (aba USB) |
 | Círculo | Atualizar a lista |
-| L1 / R1 | Trocar de aba |
+| L1 / R1 | Trocar de aba (Memory Card / USB / Converter / Rede) |
 | SELECT | Alternar slot 1 / slot 2 do Memory Card |
 | L2 | Converter .psu/.max marcados para pasta (aba USB) |
-| R2 | Escolher o formato de exportação (Pasta / PSU / MAX) |
+| R2 | Escolher o formato: exportação (aba Memory Card) ou destino (aba Converter) |
 | START | Sair |
 
 Sem nenhum card marcado, a ação vale para o card selecionado.
