@@ -1,6 +1,6 @@
 EE_BIN  = SaveManagerReis.elf
 
-EE_OBJS = main.o lzari.o sound.o \
+EE_OBJS = main.o lzari.o savefmt.o sound.o vmcfs.o \
           iomanX_irx.o fileXio_irx.o \
           usbd_irx.o bdm_irx.o bdmfs_fatfs_irx.o usbmass_bd_irx.o \
           freesd_irx.o audsrv_irx.o

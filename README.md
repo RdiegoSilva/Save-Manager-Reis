@@ -16,6 +16,11 @@ Gerenciador de saves com interface estilo dashboard.
 - Espaço livre do Memory Card no quadro **LIVRE** (amarelo abaixo de 1 MB, vermelho abaixo de 256 KB); se faltar espaço ao importar, o aviso mostra quanto precisa e quanto há livre.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
 - **Ferramentas do Memory Card** (START): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
+- **Ordenar, filtrar e buscar** (L3): ordem por Nome, Data, Tamanho ou Região; filtro por região (US, EU, JP, KR, Outras, PS1); busca por nome da pasta ou do jogo. Com filtro ativo, o quadro de saves mostra `exibidos/total`.
+- **Detalhes do save** (R3): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um (Memory Card, backups em Pasta e PSU).
+- **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
+- **Cartões virtuais (VMC do OPL):** os saves de dentro dos arquivos `.bin` / `.ps2` / `.vmc` em `mass:/VMC/` aparecem na aba USB com a etiqueta **VMC**. Dá para importar para o Memory Card real e converter para Pasta, PSU ou MAX.
+- **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa) e fazem parte do backup.
 - Aba **CONVERTER**: Pasta ⇄ PSU ⇄ MAX direto no pendrive.
 
 ## Como os backups ficam organizados no pendrive
@@ -41,6 +46,9 @@ nunca sobrescreve backups antigos (exceto dentro do mesmo segundo).
 | **Pasta** | padrão do Save Manager Reis | arquivos soltos, sem compactação |
 | **PSU** | EMS, uLaunchELF, mymc, PCSX2 | sem compactação, o mais compatível |
 | **MAX** | Action Replay MAX (`Ps2PowerSave`) | compactado (LZARI) + CRC32 |
+| **VMC** | cartão virtual do OPL (`mass:/VMC/*.bin`) | só leitura: importa e converte os saves de dentro |
+| **CBS** | CodeBreaker | só importação e conversão (compactado + criptografado) |
+| **SPS / XPS** | SharkPort / X-Port | só importação e conversão |
 
 - **Exportar:** na aba MEMORY CARD, **R2** troca o formato (Pasta → PSU → MAX) e
   **Triângulo** exporta nele.
@@ -64,6 +72,8 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Quadrado | Marcar / desmarcar todos |
 | Triângulo | Exportar (aba Memory Card) / Importar (aba USB) |
 | Círculo | Atualizar a lista |
+| L3 | Ordenar / filtrar / buscar |
+| R3 | Detalhes do save selecionado |
 | L1 / R1 | Trocar de aba (Memory Card / USB / Converter) |
 | SELECT | Atualizar tudo (reler Memory Card e USB) |
 | L2 | Trocar de Memory Card: slot 1 / 2, ou 1A–1D e 2A–2D com multitap |
@@ -88,6 +98,20 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Formatar Memory Card:** oferece backup em PSU no USB, pede confirmação duas vezes e então formata o slot atual.
 
 Limite: o app não conserta o sistema de arquivos do cartão. Se o cartão estiver ilegível, os saves dele não podem ser lidos aqui, e a saída é formatar. Se o cartão ainda lê, faça o backup antes de qualquer outra coisa.
+
+## Cartões virtuais (VMC)
+
+O OPL guarda os cartões virtuais em `VMC/` no pendrive (por exemplo `mass:/VMC/SLUS_200.52_0.bin`). O app lê o sistema de arquivos do cartão por dentro (com ou sem bytes de ECC) e lista cada save como um backup na aba **USB**, com a etiqueta **VMC** e o nome do arquivo do cartão. Use **Triângulo** para importar para o Memory Card real, ou a aba **CONVERTER** para gerar Pasta, PSU ou MAX.
+
+Limites desta versão: só **leitura** (não grava saves dentro do VMC), só a pasta `mass:/VMC/` e só cartões no formato padrão (páginas de 512 bytes, clusters de 1 KB). Se o OPL estiver em outro dispositivo (rede ou HD interno), copie o `.bin` para `mass:/VMC/`.
+
+## Saves de PS1
+
+Saves de PS1 gravados num Memory Card de PS2 aparecem com a etiqueta **PS1**, entram no filtro de região (**PS1**) e são exportados normalmente (Pasta ou PSU). Eles **não** são restaurados por este app ainda: ao importar ou copiar entre cartões, os saves de PS1 são ignorados com um aviso, porque a marca de "save de PS1" do cartão não é recriada pelo app. O formato MAX não guarda essa marca. A verificação de saves também os ignora, pois não têm `icon.sys`.
+
+## Filtro e busca
+
+**L3** (ou START → Organizar / filtrar / buscar). Na busca, use Cima/Baixo para escolher a letra, **Direita** para adicionar, **Esquerda** para apagar, **Quadrado** para limpar, L1/R1 pulam 6 letras, **X** confirma. A busca olha o nome da pasta e o nome do jogo. O backup de tudo ignora filtro e busca.
 
 ## Ícone personalizado
 
@@ -141,6 +165,6 @@ uLaunchELF, FreeMcBoot, OPL, etc.
 
 - HD interno (APA/PFS).
 - Ícones 3D reais dos saves (`.ico` / `.icn`) no lugar dos ícones por região.
-- Importar `.cbs` (CodeBreaker), `.xps` / `.sps` (SharkPort/Xploder).
+- Restaurar saves de PS1 no cartão.
 - Ícone 3D também para saves em PSU / MAX.
 - Backup completo do cartão (imagem inteira).
