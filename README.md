@@ -15,7 +15,6 @@ Gerenciador de saves com interface estilo dashboard.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
 - **Ferramentas do Memory Card** (START): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
 - Aba **CONVERTER**: Pasta ⇄ PSU ⇄ MAX direto no pendrive.
-- Aba **REDE (SMB)**: reservada, ainda não implementada.
 
 ## Como os backups ficam organizados no pendrive
 
@@ -63,7 +62,7 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Quadrado | Marcar / desmarcar todos |
 | Triângulo | Exportar (aba Memory Card) / Importar (aba USB) |
 | Círculo | Atualizar a lista |
-| L1 / R1 | Trocar de aba (Memory Card / USB / Converter / Rede) |
+| L1 / R1 | Trocar de aba (Memory Card / USB / Converter) |
 | SELECT | Atualizar tudo (reler Memory Card e USB) |
 | L2 | Alternar slot 1 / slot 2 do Memory Card |
 | R2 | Escolher o formato: exportação (aba Memory Card) ou destino (aba Converter) |
@@ -79,6 +78,7 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
 - **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para o outro slot, direto, sem passar pelo USB. Avisa se o save já existe e confere o espaço livre.
 - **Som: Ligado/Desligado:** liga e desliga os efeitos sonoros.
+- **Acertar data e hora:** edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
 - **Backup de tudo para USB:** pergunta o formato (Pasta, PSU ou MAX) e exporta todos os saves nele.
 - **Recuperar cartão ilegível / corrompido:** tenta ler o cartão 4 vezes. Se continuar ilegível, oferece formatar.
@@ -136,7 +136,6 @@ uLaunchELF, FreeMcBoot, OPL, etc.
 
 ## Próximas etapas
 
-- Transferência por rede (SMB).
 - HD interno (APA/PFS).
 - Ícones 3D reais dos saves (`.ico` / `.icn`) no lugar dos ícones por região.
 - Importar `.cbs` (CodeBreaker), `.xps` / `.sps` (SharkPort/Xploder).

@@ -9,7 +9,6 @@
  *         mass:/SaveManagerReis/<PASTA_DO_SAVE>/<AAAA-MM-DD_HH-MM-SS>/
  *   - Importa backups do pendrive / HD USB para o Memory Card.
  *   - Converte direto: exporta/importa saves em .PSU e .MAX (alem de pasta).
- *   - Aba REDE (SMB) reservada para a proxima versao.
  *
  *   Compilar com PS2SDK (veja README.md).
  * ============================================================
@@ -69,7 +68,7 @@ extern unsigned char audsrv_irx[];       extern unsigned int size_audsrv_irx;
 #define MC_TRUNC      0x0400
 #define FW            16.0f           /* largura de um caractere na escala 1.0 (Spacing 0.62) */
 
-enum { TAB_MC = 0, TAB_USB = 1, TAB_CONV = 2, TAB_NET = 3 };
+enum { TAB_MC = 0, TAB_USB = 1, TAB_CONV = 2 };
 enum { FMT_DIR = 0, FMT_PSU = 1, FMT_MAX = 2 };
 #define MAX_ARCH      (24u * 1024 * 1024)   /* limite do arquivo descomprimido de um .max */
 
@@ -187,12 +186,12 @@ static void civil_from_days(long z, int *y, int *m, int *d)
     if (*m <= 2) (*y)++;
 }
 
-/* O relogio e os cartoes do PS2 guardam a hora de TOQUIO (UTC+9). Converte para o fuso local. */
-static void jst_to_local(Now *n)
+/* Soma "mins" minutos a uma data/hora */
+static void shift_now(Now *n, long mins)
 {
     long days = days_from_civil(n->y, n->mo, n->d);
     long secs = days * 86400L + n->h * 3600L + n->mi * 60L + n->s;
-    secs += (long)(tzMin - 540) * 60L;
+    secs += mins * 60L;
     days = secs / 86400L;
     secs = secs % 86400L;
     if (secs < 0) { secs += 86400L; days--; }
@@ -201,6 +200,10 @@ static void jst_to_local(Now *n)
     n->mi = (int)((secs % 3600) / 60);
     n->s  = (int)(secs % 60);
 }
+
+/* O relogio e os cartoes do PS2 guardam a hora de TOQUIO (UTC+9). Converte para o fuso local (e vice-versa). */
+static void jst_to_local(Now *n) { shift_now(n, (long)(tzMin - 540)); }
+static void local_to_jst(Now *n) { shift_now(n, -(long)(tzMin - 540)); }
 
 static void get_now(Now *n)
 {
@@ -223,6 +226,7 @@ static void get_now(Now *n)
  * ============================================================ */
 static Now clk;
 static int clkT;
+static int clkEditing = 0, clkSel = 0, clkEd[5];     /* editor: dia, mes, ano, hora, minuto */
 
 static void rect(float x, float y, float w, float h, u64 c)
 {
@@ -509,9 +513,9 @@ static void render(void)
 
     /* ---- abas ---- */
     {
-        static const char *names[4] = { "MEMORY CARD", "USB / HD", "CONVERTER", "REDE" };
+        static const char *names[3] = { "MEMORY CARD", "USB / HD", "CONVERTER" };
         x = M;
-        for (i = 0; i < 4; i++) {
+        for (i = 0; i < 3; i++) {
             float w = tw(names[i], 0.55f) + 26;
             if (i == tab) { hgrad(x, 64, w, 24, C_ACC, C_ACC2); text(x + 13, 69, 0.55f, C_DARK, names[i]); }
             else          { rect(x, 64, w, 24, C_CARD);         text(x + 13, 69, 0.55f, C_MUTED, names[i]); }
@@ -540,7 +544,7 @@ static void render(void)
     for (i = 0; i < N; i++) marked += L[i].sel;
 
     /* ---- quadros de resumo ---- */
-    if (tab != TAB_NET) {
+    {
         const float tgap = 10, tile = (W - 2 * M - 2 * tgap) / 3.0f;
         const char *lab[3];
         char val[3][32];
@@ -573,13 +577,7 @@ static void render(void)
     }
 
     /* ---- grade de cards ---- */
-    if (tab == TAB_NET) {
-        rect(M, 110, W - 2 * M, 150, C_CARD);
-        rect(M, 110, W - 2 * M, 3, C_ACC2);
-        ctext(W / 2, 140, 0.8f, C_TXT, "REDE (SMB)  -  EM BREVE");
-        ctext(W / 2, 178, 0.48f, C_MUTED, "Envio e recebimento de saves pela rede local");
-        ctext(W / 2, 198, 0.48f, C_MUTED, "ficara disponivel na proxima versao.");
-    } else if (N == 0) {
+    if (N == 0) {
         rect(M, 134, W - 2 * M, 120, C_CARD);
         rect(M, 134, W - 2 * M, 3, C_ACC);
         if (tab == TAB_MC) {
@@ -618,36 +616,33 @@ static void render(void)
     /* ---- rodape ---- */
     rect(0, H - 56, W, 56, C_BAR);
     hgrad(0, H - 56, W, 2, C_ACC2, C_ACC);
-    if (tab == TAB_NET) {
-        x = key_pill(M, H - 40, "L1/R1", "Trocar aba");
-        key_pill(x, H - 40, "START", "Menu");
-    } else {
-        x = M;
-        x = key_btn(x, H - 50, 0, C_BLUE, "Marcar");
-        x = key_btn(x, H - 50, 1, C_PINK, "Todos");
-        {
-            char tl[48];
-            if (tab == TAB_MC)        snprintf(tl, sizeof(tl), "Exportar p/ USB");
-            else if (tab == TAB_USB)  snprintf(tl, sizeof(tl), "Importar p/ Memory Card");
-            else                      snprintf(tl, sizeof(tl), "Converter p/ %s", FMT_NAME[convFmt]);
-            x = key_btn(x, H - 50, 2, C_GREEN, tl);
-        }
-        x = key_btn(x, H - 50, 3, C_RED, "Atualizar");
-        x = M;
-        x = key_pill(x, H - 30, "L1/R1", "Abas");
-        if (tab == TAB_MC) {
-            char fl[32];
-            snprintf(fl, sizeof(fl), "Formato: %s", FMT_NAME[expFmt]);
-            x = key_pill(x, H - 30, "R2", fl);
-        }
-        x = key_pill(x, H - 30, "L2", "Slot");
-        x = key_pill(x, H - 30, "SELECT", "Atualizar");
-        if (tab == TAB_CONV) {
-            char fl[32];
-            snprintf(fl, sizeof(fl), "Destino: %s", FMT_NAME[convFmt]);
-            x = key_pill(x, H - 30, "R2", fl);
-        }
-        key_pill(x, H - 30, "START", "Menu");
+    {
+    x = M;
+    x = key_btn(x, H - 50, 0, C_BLUE, "Marcar");
+    x = key_btn(x, H - 50, 1, C_PINK, "Todos");
+    {
+        char tl[48];
+        if (tab == TAB_MC)        snprintf(tl, sizeof(tl), "Exportar p/ USB");
+        else if (tab == TAB_USB)  snprintf(tl, sizeof(tl), "Importar p/ Memory Card");
+        else                      snprintf(tl, sizeof(tl), "Converter p/ %s", FMT_NAME[convFmt]);
+        x = key_btn(x, H - 50, 2, C_GREEN, tl);
+    }
+    x = key_btn(x, H - 50, 3, C_RED, "Atualizar");
+    x = M;
+    x = key_pill(x, H - 30, "L1/R1", "Abas");
+    if (tab == TAB_MC) {
+        char fl[32];
+        snprintf(fl, sizeof(fl), "Formato: %s", FMT_NAME[expFmt]);
+        x = key_pill(x, H - 30, "R2", fl);
+    }
+    x = key_pill(x, H - 30, "L2", "Slot");
+    x = key_pill(x, H - 30, "SELECT", "Atualizar");
+    if (tab == TAB_CONV) {
+        char fl[32];
+        snprintf(fl, sizeof(fl), "Destino: %s", FMT_NAME[convFmt]);
+        x = key_pill(x, H - 30, "R2", fl);
+    }
+    key_pill(x, H - 30, "START", "Menu");
     }
 
     /* ---- aviso (toast) ---- */
@@ -673,6 +668,32 @@ static void render(void)
             else              { rect(mx + 14, iy, mw - 28, 22, C_CARD);         text(mx + 24, iy + 4, 0.48f, C_TXT, ui.mitem[k]); }
         }
         text(mx + 14, my + mh - 18, 0.38f, C_MUTED, "X escolher    O voltar");
+    } else if (clkEditing) {
+        static const char *lab[5] = { "DIA", "MES", "ANO", "HORA", "MIN" };
+        static const float fw[5] = { 64, 64, 96, 64, 64 };
+        float bw = 470, bh = 190, bx = (W - bw) / 2, by = (H - bh) / 2, fx, tot = 14 * 4;
+        char v[8], zs[40];
+        int k;
+        for (k = 0; k < 5; k++) tot += fw[k];
+        rect(0, 0, W, H, C_DIM);
+        rect(bx + 4, by + 5, bw, bh, C_SHADOW);
+        rect(bx, by, bw, bh, C_BAR);
+        hgrad(bx, by, bw, 4, C_ACC, C_ACC2);
+        ctext(W / 2, by + 14, 0.65f, C_TXT, "ACERTAR DATA E HORA");
+        fx = bx + (bw - tot) / 2;
+        for (k = 0; k < 5; k++) {
+            if (k == 2) snprintf(v, sizeof(v), "%04d", clkEd[k]);
+            else        snprintf(v, sizeof(v), "%02d", clkEd[k]);
+            ctext(fx + fw[k] / 2, by + 50, 0.40f, C_MUTED, lab[k]);
+            if (k == clkSel) { hgrad(fx, by + 68, fw[k], 46, C_ACC, C_ACC2); ctext(fx + fw[k] / 2, by + 80, 0.85f, C_DARK, v); }
+            else             { rect(fx, by + 68, fw[k], 46, C_CARD);         ctext(fx + fw[k] / 2, by + 80, 0.85f, C_TXT, v); }
+            fx += fw[k] + 14;
+        }
+        snprintf(zs, sizeof(zs), "Hora local (GMT%c%d%s)", tzMin < 0 ? '-' : '+', (tzMin < 0 ? -tzMin : tzMin) / 60,
+                 (tzMin % 60) ? ":30" : "");
+        ctext(W / 2, by + 128, 0.42f, C_MUTED, zs);
+        ctext(W / 2, by + 150, 0.38f, C_MUTED, "Cima/Baixo altera   Esq/Dir muda o campo");
+        ctext(W / 2, by + 166, 0.38f, C_MUTED, "X gravar no relogio do console    O cancelar");
     } else if (ui.busy || ui.modal) {
         int nx = ui.modal ? ui.extraN : 0, k;
         float bh = 130 + nx * 18, bx = (W - 440) / 2, by = (H - bh) / 2, yb = by + 92 + nx * 18;
@@ -2961,10 +2982,84 @@ static void tool_icon(void)
     else toast("Icone trocado (%d arquivo(s))", changed);
 }
 
+static int days_in_month(int y, int m)
+{
+    static const int dm[12] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    int d = dm[(m < 1 ? 1 : m > 12 ? 12 : m) - 1];
+    if (m == 2 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) d = 29;
+    return d;
+}
+
+#define TOBCD(x) ((u8)((((x) / 10) << 4) | ((x) % 10)))
+
+/* acerta o relogio do console (RTC), como faz o uLaunchELF */
+static void tool_clock(void)
+{
+    Now n, w;
+    sceCdCLOCK c;
+    int done = 0, ok = 0, dm, v, dir;
+
+    get_now(&n);
+    if (!n.y) { n.y = 2026; n.mo = 1; n.d = 1; n.h = 12; n.mi = 0; }   /* relogio ilegivel: valor inicial */
+    if (n.y < 2000) n.y = 2000;
+    if (n.y > 2099) n.y = 2099;
+    clkEd[0] = n.d; clkEd[1] = n.mo; clkEd[2] = n.y; clkEd[3] = n.h; clkEd[4] = n.mi;
+    clkSel = 0; clkEditing = 1;
+
+    while (!done) {
+        read_pad();
+        if (pad_new & PAD_LEFT)  { clkSel = (clkSel + 4) % 5; snd_play(SND_MOVE); }
+        if (pad_new & PAD_RIGHT) { clkSel = (clkSel + 1) % 5; snd_play(SND_MOVE); }
+        if ((pad_new & PAD_UP) || (pad_new & PAD_DOWN)) {
+            dir = (pad_new & PAD_UP) ? 1 : -1;
+            v = clkEd[clkSel] + dir;
+            dm = days_in_month(clkEd[2], clkEd[1]);
+            switch (clkSel) {
+            case 0: if (v < 1) v = dm;      if (v > dm) v = 1;     break;
+            case 1: if (v < 1) v = 12;      if (v > 12) v = 1;     break;
+            case 2: if (v < 2000) v = 2099; if (v > 2099) v = 2000; break;
+            case 3: if (v < 0) v = 23;      if (v > 23) v = 0;     break;
+            default: if (v < 0) v = 59;     if (v > 59) v = 0;     break;
+            }
+            clkEd[clkSel] = v;
+            dm = days_in_month(clkEd[2], clkEd[1]);            /* mes/ano mudou: ajusta o dia */
+            if (clkEd[0] > dm) clkEd[0] = dm;
+            snd_play(SND_MOVE);
+        }
+        if (pad_new & PAD_CIRCLE) { done = 1; snd_play(SND_BACK); }
+        if (pad_new & PAD_CROSS)  { ok = 1; done = 1; snd_play(SND_OK); }
+        render();
+        present();
+    }
+    clkEditing = 0;
+    if (!ok) return;
+
+    tz_refresh();
+    memset(&w, 0, sizeof(w));
+    w.d = clkEd[0]; w.mo = clkEd[1]; w.y = clkEd[2]; w.h = clkEd[3]; w.mi = clkEd[4];
+    local_to_jst(&w);                                   /* o RTC guarda a hora de Toquio */
+    if (w.y < 2000 || w.y > 2099) { toast("Falha: data fora do limite%.0d", 0); return; }
+
+    memset(&c, 0, sizeof(c));
+    c.second = TOBCD(w.s);
+    c.minute = TOBCD(w.mi);
+    c.hour   = TOBCD(w.h);
+    c.day    = TOBCD(w.d);
+    c.month  = TOBCD(w.mo);
+    c.year   = TOBCD(w.y - 2000);
+    if (sceCdWriteClock(&c)) {
+        get_now(&clk);
+        clkT = 30;
+        toast("Data e hora acertadas%.0d", 0);
+    } else {
+        toast("Falha ao gravar o relogio%.0d", 0);
+    }
+}
+
 static void do_mc_tools(void)
 {
     char soundLabel[24];
-    const char *items[9] = {
+    const char *items[10] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -2973,12 +3068,13 @@ static void do_mc_tools(void)
         "Recuperar cartao ilegivel / corrompido",
         "Formatar Memory Card",
         NULL,
+        "Acertar data e hora",
         "Sair do aplicativo"
     };
     int c;
     snprintf(soundLabel, sizeof(soundLabel), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
     items[7] = soundLabel;
-    c = menu_run("FERRAMENTAS", items, 9);
+    c = menu_run("FERRAMENTAS", items, 10);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) {
         snd_set(!snd_enabled());
@@ -2986,7 +3082,8 @@ static void do_mc_tools(void)
         toast(snd_enabled() ? "Som ligado%.0d" : "Som desligado%.0d", 0);
         return;
     }
-    if (c == 8) {
+    if (c == 8) { tool_clock(); return; }
+    if (c == 9) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) quitReq = 1;
         return;
     }
@@ -3113,12 +3210,12 @@ int main(int argc, char *argv[])
         if (pad_new & PAD_START) { do_mc_tools(); if (quitReq) break; }
         {
             int ot = tab;
-            if (pad_new & PAD_R1) tab = (tab + 1) % 4;
-            if (pad_new & PAD_L1) tab = (tab + 3) % 4;
+            if (pad_new & PAD_R1) tab = (tab + 1) % 3;
+            if (pad_new & PAD_L1) tab = (tab + 2) % 3;
             if (tab != ot) snd_play(SND_TAB);
         }
 
-        if (tab != TAB_NET && N > 0) {
+        if (N > 0) {
             int *c = &cursorPos[tab];
             int oc = *c;
             if (pad_new & PAD_RIGHT) { if (*c < N - 1) (*c)++; }
@@ -3179,7 +3276,7 @@ int main(int argc, char *argv[])
             }
         }
 
-        if (tab != TAB_NET) {
+        {
             Entry *LT = (tab == TAB_MC) ? mcList : usbList;
             int NT = (tab == TAB_MC) ? mcCount : usbCount;
             if (NT > 0) title_pump(tab, LT, NT);
