@@ -2258,6 +2258,80 @@ static int mc_port_ready(int port, int *freeKB)
     return ok;
 }
 
+/* ---------------- Icone personalizado (BMP 128x128 -> textura do .ico) ---------------- */
+/* BMP 24/32 bits sem compressao, 128x128 -> 16384 pixels RGB555 (bit 15 ligado) */
+static int bmp_to_tex(const u8 *b, int len, u16 *out, const char **err)
+{
+    u32 off, hsz, comp;
+    int w, h, bpp, stride, top, x, y;
+    if (len < 54 || b[0] != 'B' || b[1] != 'M') { *err = "Nao e um arquivo BMP"; return 0; }
+    off = ld32(b + 10); hsz = ld32(b + 14);
+    if (hsz < 40) { *err = "BMP antigo nao suportado"; return 0; }
+    w = (int)ld32(b + 18); h = (int)ld32(b + 22);
+    bpp = (int)ld16(b + 28); comp = ld32(b + 30);
+    top = h < 0;
+    if (top) h = -h;
+    if (w != 128 || h != 128) { *err = "A imagem precisa ter 128x128 pixels"; return 0; }
+    if ((bpp != 24 && bpp != 32) || (comp != 0 && !(bpp == 32 && comp == 3))) { *err = "Salve como BMP de 24 bits, sem compressao"; return 0; }
+    stride = ((w * bpp + 31) / 32) * 4;
+    if ((u32)len < off + (u32)stride * 128u) { *err = "Arquivo BMP incompleto"; return 0; }
+    for (y = 0; y < 128; y++) {
+        const u8 *p = b + off + (u32)(top ? y : 127 - y) * (u32)stride;
+        for (x = 0; x < 128; x++, p += bpp / 8)
+            out[y * 128 + x] = (u16)((p[2] >> 3) | ((p[1] >> 3) << 5) | ((p[0] >> 3) << 10) | 0x8000);
+    }
+    return 1;
+}
+
+/* posicao onde comeca a textura (ate o fim do arquivo) ou -1 */
+static int ico_tex_start(const u8 *d, int len)
+{
+    u32 shapes, attr, nv, nf;
+    int vsz, ap, hsz, found = -1;
+    u16 *tmp;
+    if (len < 40 || rd32(d) != 0x010000) return -1;
+    shapes = rd32(d + 4); attr = rd32(d + 8); nv = rd32(d + 16);
+    if (shapes < 1 || shapes > 64 || nv < 3 || nv > 8000 || (nv % 3)) return -1;
+    vsz = (int)shapes * 8 + 16;
+    ap = 20 + (int)nv * vsz;
+    if (ap > len || !(attr & 4)) return -1;
+    if (!(attr & 8)) return len >= 32768 + 20 ? len - 32768 : -1;
+    if (ap + 20 > len) return -1;
+    nf = rd32(d + ap + 16);
+    tmp = (u16 *)malloc(16384 * sizeof(u16));
+    if (!tmp) return -1;
+    for (hsz = 16; hsz >= 8 && found < 0; hsz -= 8) {
+        int p = ap + 20;
+        u32 f;
+        for (f = 0; f < nf && f < 4096; f++) {
+            u32 keys;
+            if (p + 8 > len) { p = -1; break; }
+            keys = rd32(d + p + 4);
+            if (keys > 100000) { p = -1; break; }
+            p += hsz + (int)keys * 8;
+        }
+        if (p > 0 && p + 4 < len && rd32(d + p) >= 2 && rd32(d + p) <= (u32)(len - p - 4) &&
+            rle_decode(d, len, p + 4, tmp)) found = p;
+    }
+    free(tmp);
+    return found;
+}
+
+/* devolve um novo .ico igual ao original, com a textura trocada (sem compressao). NULL = formato nao reconhecido */
+static u8 *ico_replace_tex(const u8 *d, int len, const u16 *tex, int *outLen)
+{
+    int ts = ico_tex_start(d, len), i;
+    u8 *o;
+    if (ts < 0) return NULL;
+    o = (u8 *)malloc((size_t)ts + 32768);
+    if (!o) return NULL;
+    memcpy(o, d, (size_t)ts);
+    st32(o + 8, (rd32(d + 8) | 4u) & ~8u);
+    for (i = 0; i < 16384; i++) st16(o + ts + i * 2, tex[i]);
+    *outLen = ts + 32768;
+    return o;
+}
+
 /* despacho por formato */
 static int export_one(const Entry *e, const char *stamp)
 {
@@ -2571,35 +2645,155 @@ static void tool_copy(void)
     else             toast("Nada copiado%.0d", 0);
 }
 
+/* ---- trocar icone do save ---- */
+static char bmpNames[64][64];
+
+static int pick_bmp(int n)
+{
+    int page = 0, per = 7;
+    for (;;) {
+        const char *it[8];
+        int cnt = 0, k, more = n > per, c;
+        for (k = 0; k < per && page * per + k < n; k++) it[cnt++] = bmpNames[page * per + k];
+        if (more) it[cnt++] = "Mais arquivos...";
+        c = menu_run("ESCOLHA A IMAGEM (BMP 128x128)", it, cnt);
+        if (c < 0) return -1;
+        if (more && c == cnt - 1) { page = ((page + 1) * per < n) ? page + 1 : 0; continue; }
+        return page * per + c;
+    }
+}
+
+static int has_bmp_ext(const char *n)
+{
+    size_t l = strlen(n);
+    return l > 4 && n[l - 4] == '.' && (n[l - 3] | 0x20) == 'b' && (n[l - 2] | 0x20) == 'm' && (n[l - 1] | 0x20) == 'p';
+}
+
+static void tool_icon(void)
+{
+    int idx[MAX_ENT], k, nb = 0, pick, sl = 0, i, j, changed = 0, fails = 0, bl = 0, backed = 0;
+    char dirp[96], path[300], base[64], names[3][65], m[96];
+    const char *err = "";
+    DIR *d;
+    struct dirent *de;
+    u8 *sys, *bmp;
+    u16 *tex;
+    if (!mcReady) { toast("Memory Card nao encontrado%.0d", 0); return; }
+    if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB%.0d", 0); return; }
+    k = gather(mcList, mcCount, idx);
+    if (k != 1) { toast("Marque apenas 1 save%.0d", 0); return; }
+
+    snprintf(dirp, sizeof(dirp), ROOT_DIR "/icones");
+    mkdir(ROOT_DIR, 0777);
+    mkdir(dirp, 0777);
+    d = opendir(dirp);
+    if (d) {
+        while ((de = readdir(d)) != NULL && nb < 64) {
+            if (de->d_name[0] == '.' || !has_bmp_ext(de->d_name)) continue;
+            snprintf(bmpNames[nb++], sizeof(bmpNames[0]), "%s", de->d_name);
+        }
+        closedir(d);
+    }
+    if (nb == 0) { info("NENHUMA IMAGEM", "Coloque BMP 128x128 (24 bits) em SaveManagerReis/icones"); return; }
+    pick = pick_bmp(nb);
+    if (pick < 0) return;
+
+    snprintf(path, sizeof(path), "%s/%s", dirp, bmpNames[pick]);
+    bmp = read_all(1, path, &bl);
+    tex = (u16 *)malloc(16384 * sizeof(u16));
+    if (!bmp || !tex || !bmp_to_tex(bmp, bl, tex, &err)) {
+        info("IMAGEM INVALIDA", bmp ? err : "Nao foi possivel ler o arquivo");
+        free(bmp); free(tex);
+        return;
+    }
+    free(bmp);
+
+    snprintf(base, sizeof(base), "/%s", mcList[idx[0]].name);
+    snprintf(path, sizeof(path), "%s/icon.sys", base);
+    sys = read_all(0, path, &sl);
+    if (!sys || sl < 0x1C4 || memcmp(sys, "PS2D", 4) != 0) {
+        info("SAVE SEM icon.sys", "Nao da para trocar o icone deste save");
+        free(sys); free(tex);
+        return;
+    }
+    for (i = 0; i < 3; i++) { memcpy(names[i], sys + 0x104 + i * 0x40, 64); names[i][64] = 0; }
+    free(sys);
+
+    snprintf(m, sizeof(m), "Trocar o icone de %s por %s?", mcList[idx[0]].name, bmpNames[pick]);
+    if (!confirm("TROCAR ICONE DO SAVE", m)) { free(tex); return; }
+
+    snprintf(ui.title, sizeof(ui.title), "TROCANDO ICONE");
+    ui.busy = 1;
+    for (i = 0; i < 3; i++) {
+        u8 *ico, *nw;
+        int il = 0, nl = 0, dup = 0;
+        if (!names[i][0] || !safe_name(names[i])) continue;
+        for (j = 0; j < i; j++) if (!strcmp(names[i], names[j])) dup = 1;
+        if (dup) continue;
+        snprintf(path, sizeof(path), "%s/%s", base, names[i]);
+        ico = read_all(0, path, &il);
+        if (!ico) continue;                           /* arquivo de icone citado mas ausente */
+        nw = ico_replace_tex(ico, il, tex, &nl);
+        if (!nw) { fails++; free(ico); continue; }
+        {                                             /* guarda o original no USB (so a 1a vez) */
+            char bd[160], bf[260];
+            struct stat st;
+            snprintf(bd, sizeof(bd), ROOT_DIR "/icones/originais");
+            mkdir(bd, 0777);
+            snprintf(bd, sizeof(bd), ROOT_DIR "/icones/originais/%s", mcList[idx[0]].name);
+            mkdir(bd, 0777);
+            snprintf(bf, sizeof(bf), "%s/%s", bd, names[i]);
+            if (stat(bf, &st) != 0) {
+                int fd = open(bf, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+                if (fd >= 0) { if (wr_all(fd, ico, (u32)il) == 0) backed++; close(fd); }
+            }
+        }
+        g_done = 0; g_total = (u32)nl;
+        if (mem_to_mc(nw, (u32)nl, path, mcList[idx[0]].name) < 0) fails++; else changed++;
+        free(nw); free(ico);
+    }
+    ui.busy = 0;
+    free(tex);
+    icon_free_all(TAB_MC);                            /* recarrega a miniatura */
+    if (fails || changed == 0) toast("Falha ao trocar o icone (%d)", fails);
+    else toast("Icone trocado (%d arquivo(s))", changed);
+}
+
 static void do_mc_tools(void)
 {
-    const char *items[7] = {
+    const char *items[8] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
-        "Backup de tudo para USB (PSU)",
+        "Trocar icone do save (BMP 128x128)",
+        "Backup de tudo para USB (escolher formato)",
         "Recuperar cartao ilegivel / corrompido",
         "Formatar Memory Card",
         "Sair do aplicativo"
     };
-    int c = menu_run("FERRAMENTAS", items, 7);
-    if (c >= 0 && c <= 5) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
-    if (c == 6) {
+    int c = menu_run("FERRAMENTAS", items, 8);
+    if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
+    if (c == 7) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) quitReq = 1;
         return;
     }
     if (c == 0) tool_verify();
     else if (c == 1) tool_delete();
     else if (c == 2) tool_copy();
-    else if (c == 3) {
-        int oldFmt = expFmt;
-        mark_all_mc();
-        expFmt = FMT_PSU;
-        do_export();
-        expFmt = oldFmt;
+    else if (c == 3) tool_icon();
+    else if (c == 4) {
+        const char *fm[3] = { "Pasta (arquivos soltos)", "PSU", "MAX (compactado)" };
+        int f = menu_run("FORMATO DO BACKUP", fm, 3);
+        if (f >= 0) {
+            int oldFmt = expFmt;
+            mark_all_mc();
+            expFmt = f;
+            do_export();
+            expFmt = oldFmt;
+        }
     }
-    else if (c == 4) tool_recover();
-    else if (c == 5) {
+    else if (c == 5) tool_recover();
+    else if (c == 6) {
         if (!mcReady && !mcNoFmt) { toast("Memory Card nao encontrado%.0d", 0); return; }
         tool_format();
     }

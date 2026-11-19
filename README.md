@@ -75,11 +75,23 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Verificar saves:** lê todos os arquivos de cada save e confere se existe `icon.sys`. Lista os que têm problema e oferece apagá-los.
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
 - **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para o outro slot, direto, sem passar pelo USB. Avisa se o save já existe e confere o espaço livre.
-- **Backup de tudo para USB (PSU):** exporta todos os saves em PSU.
+- **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
+- **Backup de tudo para USB:** pergunta o formato (Pasta, PSU ou MAX) e exporta todos os saves nele.
 - **Recuperar cartão ilegível / corrompido:** tenta ler o cartão 4 vezes. Se continuar ilegível, oferece formatar.
 - **Formatar Memory Card:** oferece backup em PSU no USB, pede confirmação duas vezes e então formata o slot atual.
 
 Limite: o app não conserta o sistema de arquivos do cartão. Se o cartão estiver ilegível, os saves dele não podem ser lidos aqui, e a saída é formatar. Se o cartão ainda lê, faça o backup antes de qualquer outra coisa.
+
+## Ícone personalizado
+
+Formato da imagem: **BMP, 128 × 128 pixels, 24 bits, sem compressão** (sem transparência).
+Qualquer editor exporta isso (no Paint: Salvar como → BMP de 24 bits; no GIMP: Exportar como .bmp, "Não gravar informações de espaço de cores").
+
+1. Coloque o `.bmp` em `mass:/SaveManagerReis/icones/` (a pasta é criada na primeira vez que você abre a opção).
+2. Na aba MEMORY CARD, selecione o save (ou marque só um) e aperte **START → Trocar icone do save**.
+3. Escolha a imagem e confirme.
+
+O app troca a textura do ícone (o modelo 3D continua o mesmo) nos arquivos de ícone citados no `icon.sys`. O arquivo original é guardado antes em `SaveManagerReis/icones/originais/<SAVE>/` (só na primeira troca), então dá para restaurar copiando de volta para o save.
 
 ## Compilar o ELF
 
