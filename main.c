@@ -136,6 +136,12 @@ static int   tab = TAB_MC, mcSlot = 0, mcReady = 0, usbOk = 0, mcFreeKB = 0;
 static int   cardPort[8] = { 0, 1 }, cardSlot[8] = { 0, 0 }, cardTap[8], nCards = 2;
 #define MP(i) cardPort[i]
 #define MS(i) cardSlot[i]
+
+static void card_name(int i, char *b, int n)
+{
+    if (cardTap[i]) snprintf(b, n, "%d%c", cardPort[i] + 1, 'A' + cardSlot[i]);
+    else            snprintf(b, n, "%d", cardPort[i] + 1);
+}
 static int   cursorPos[4], topRow[4];
 static u32   frameNo;
 
@@ -751,12 +757,6 @@ static void progress(const char *msg, u32 done, u32 total)
     snprintf(ui.msg, sizeof(ui.msg), "%s", msg);
     render();
     present();
-}
-
-static void card_name(int i, char *b, int n)
-{
-    if (cardTap[i]) snprintf(b, n, "%d%c", cardPort[i] + 1, 'A' + cardSlot[i]);
-    else            snprintf(b, n, "%d", cardPort[i] + 1);
 }
 
 static void toast(const char *fmt, int n)
