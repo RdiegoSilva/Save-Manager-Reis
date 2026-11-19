@@ -75,6 +75,7 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Verificar saves:** lê todos os arquivos de cada save e confere se existe `icon.sys`. Lista os que têm problema e oferece apagá-los.
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
 - **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para o outro slot, direto, sem passar pelo USB. Avisa se o save já existe e confere o espaço livre.
+- **Som: Ligado/Desligado:** liga e desliga os efeitos sonoros.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
 - **Backup de tudo para USB:** pergunta o formato (Pasta, PSU ou MAX) e exporta todos os saves nele.
 - **Recuperar cartão ilegível / corrompido:** tenta ler o cartão 4 vezes. Se continuar ilegível, oferece formatar.
@@ -92,6 +93,12 @@ Qualquer editor exporta isso (no Paint: Salvar como → BMP de 24 bits; no GIMP:
 3. Escolha a imagem e confirme.
 
 O app troca a textura do ícone (o modelo 3D continua o mesmo) nos arquivos de ícone citados no `icon.sys`. O arquivo original é guardado antes em `SaveManagerReis/icones/originais/<SAVE>/` (só na primeira troca), então dá para restaurar copiando de volta para o save.
+
+## Som
+
+Efeitos sonoros gerados pelo próprio programa (sem arquivos de áudio): clique ao mover o cursor, ao marcar, ao trocar de aba, ao confirmar/voltar, aviso de sucesso, aviso de erro e um som de abertura. Para desligar: START → **Som: Ligado/Desligado**.
+
+Usa `audsrv.irx` e `freesd.irx` do PS2SDK, embutidos no ELF (o `Makefile` já cuida disso). Os arquivos de código agora são `main.c`, `lzari.c`/`lzari.h` e `sound.c`/`sound.h`: mantenha todos na mesma pasta do `Makefile`.
 
 ## Compilar o ELF
 

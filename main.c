@@ -43,6 +43,7 @@
 #include <dmaKit.h>
 
 #include "lzari.h"
+#include "sound.h"
 
 /* ---------------- IRX embutidos (gerados pelo Makefile) ---------------- */
 extern unsigned char iomanX_irx[];       extern unsigned int size_iomanX_irx;
@@ -51,6 +52,8 @@ extern unsigned char usbd_irx[];         extern unsigned int size_usbd_irx;
 extern unsigned char bdm_irx[];          extern unsigned int size_bdm_irx;
 extern unsigned char bdmfs_fatfs_irx[];  extern unsigned int size_bdmfs_fatfs_irx;
 extern unsigned char usbmass_bd_irx[];   extern unsigned int size_usbmass_bd_irx;
+extern unsigned char freesd_irx[];       extern unsigned int size_freesd_irx;
+extern unsigned char audsrv_irx[];       extern unsigned int size_audsrv_irx;
 
 /* ---------------- Constantes ---------------- */
 #define APP_NAME      "SAVE MANAGER REIS"
@@ -111,7 +114,7 @@ typedef struct {
     int    toastT;
     int    toastErr;
     int    menu, mn, msel;          /* menu de opcoes (modal com lista) */
-    const char *mitem[8];
+    const char *mitem[10];
 } UI;
 
 /* ---------------- Globais ---------------- */
@@ -693,6 +696,7 @@ static void toast(const char *fmt, int n)
     snprintf(ui.toast, sizeof(ui.toast), fmt, n);
     ui.toastErr = (strstr(ui.toast, "alha") || strstr(ui.toast, "nao ") || strstr(ui.toast, "Conecte") || strstr(ui.toast, "Sem ")) ? 1 : 0;
     ui.toastT = 240;
+    snd_play(ui.toastErr ? SND_ERR : SND_DONE);
 }
 
 /* ============================================================
@@ -725,8 +729,8 @@ static int confirm(const char *title, const char *msg)
     ui.modal = 1;
     while (res < 0) {
         read_pad();
-        if (pad_new & PAD_CROSS)  res = 1;
-        if (pad_new & PAD_CIRCLE) res = 0;
+        if (pad_new & PAD_CROSS)  { res = 1; snd_play(SND_OK); }
+        if (pad_new & PAD_CIRCLE) { res = 0; snd_play(SND_BACK); }
         render();
         present();
     }
@@ -742,7 +746,7 @@ static void info(const char *title, const char *msg)
     ui.modal = 2;
     while (!done) {
         read_pad();
-        if (pad_new & (PAD_CROSS | PAD_CIRCLE)) done = 1;
+        if (pad_new & (PAD_CROSS | PAD_CIRCLE)) { done = 1; snd_play(SND_OK); }
         render();
         present();
     }
@@ -754,14 +758,14 @@ static int menu_run(const char *title, const char **items, int n)
 {
     int res = -2, k;
     snprintf(ui.title, sizeof(ui.title), "%s", title);
-    for (k = 0; k < n && k < 8; k++) ui.mitem[k] = items[k];
+    for (k = 0; k < n && k < 10; k++) ui.mitem[k] = items[k];
     ui.mn = n; ui.msel = 0; ui.menu = 1;
     while (res == -2) {
         read_pad();
-        if (pad_new & PAD_UP)    ui.msel = (ui.msel + n - 1) % n;
-        if (pad_new & PAD_DOWN)  ui.msel = (ui.msel + 1) % n;
-        if (pad_new & PAD_CROSS) res = ui.msel;
-        if (pad_new & PAD_CIRCLE) res = -1;
+        if (pad_new & PAD_UP)    { ui.msel = (ui.msel + n - 1) % n; snd_play(SND_MOVE); }
+        if (pad_new & PAD_DOWN)  { ui.msel = (ui.msel + 1) % n; snd_play(SND_MOVE); }
+        if (pad_new & PAD_CROSS) { res = ui.msel; snd_play(SND_OK); }
+        if (pad_new & PAD_CIRCLE) { res = -1; snd_play(SND_BACK); }
         render();
         present();
     }
@@ -2761,7 +2765,8 @@ static void tool_icon(void)
 
 static void do_mc_tools(void)
 {
-    const char *items[8] = {
+    char soundLabel[24];
+    const char *items[9] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -2769,11 +2774,21 @@ static void do_mc_tools(void)
         "Backup de tudo para USB (escolher formato)",
         "Recuperar cartao ilegivel / corrompido",
         "Formatar Memory Card",
+        NULL,
         "Sair do aplicativo"
     };
-    int c = menu_run("FERRAMENTAS", items, 8);
+    int c;
+    snprintf(soundLabel, sizeof(soundLabel), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
+    items[7] = soundLabel;
+    c = menu_run("FERRAMENTAS", items, 9);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) {
+        snd_set(!snd_enabled());
+        snd_play(SND_OK);
+        toast(snd_enabled() ? "Som ligado%.0d" : "Som desligado%.0d", 0);
+        return;
+    }
+    if (c == 8) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) quitReq = 1;
         return;
     }
@@ -2823,12 +2838,15 @@ static void init_iop(void)
     SifExecModuleBuffer(bdm_irx, size_bdm_irx, 0, NULL, &ret);
     SifExecModuleBuffer(bdmfs_fatfs_irx, size_bdmfs_fatfs_irx, 0, NULL, &ret);
     SifExecModuleBuffer(usbmass_bd_irx, size_usbmass_bd_irx, 0, NULL, &ret);
+    SifExecModuleBuffer(freesd_irx, size_freesd_irx, 0, NULL, &ret);
+    SifExecModuleBuffer(audsrv_irx, size_audsrv_irx, 0, NULL, &ret);
 
     fileXioInit();
     sceCdInit(SCECdINoD);
     mcInit(MC_TYPE_XMC);
     padInit(0);
     padPortOpen(0, 0, padbuf);
+    snd_init();
 }
 
 static void init_gfx(void)
@@ -2886,6 +2904,7 @@ int main(int argc, char *argv[])
 
     refresh_mc();
     refresh_usb();
+    snd_play(SND_START);
 
     for (;;) {
         read_pad();
@@ -2894,17 +2913,24 @@ int main(int argc, char *argv[])
         N = (tab == TAB_MC) ? mcCount : usbCount;
 
         if (pad_new & PAD_START) { do_mc_tools(); if (quitReq) break; }
-        if (pad_new & PAD_R1) tab = (tab + 1) % 4;
-        if (pad_new & PAD_L1) tab = (tab + 3) % 4;
+        {
+            int ot = tab;
+            if (pad_new & PAD_R1) tab = (tab + 1) % 4;
+            if (pad_new & PAD_L1) tab = (tab + 3) % 4;
+            if (tab != ot) snd_play(SND_TAB);
+        }
 
         if (tab != TAB_NET && N > 0) {
             int *c = &cursorPos[tab];
+            int oc = *c;
             if (pad_new & PAD_RIGHT) { if (*c < N - 1) (*c)++; }
             if (pad_new & PAD_LEFT)  { if (*c > 0) (*c)--; }
             if (pad_new & PAD_DOWN)  { *c += 4; if (*c > N - 1) *c = N - 1; }
             if (pad_new & PAD_UP)    { *c -= 4; if (*c < 0) *c = 0; }
-            if (pad_new & PAD_CROSS) L[*c].sel = !L[*c].sel;
+            if (*c != oc) snd_play(SND_MOVE);
+            if (pad_new & PAD_CROSS) { L[*c].sel = !L[*c].sel; snd_play(SND_SELECT); }
             if (pad_new & PAD_SQUARE) {
+                snd_play(SND_SELECT);
                 int any = 0;
                 for (i = 0; i < N; i++) if (!L[i].sel) any = 1;
                 for (i = 0; i < N; i++) L[i].sel = any;
@@ -2922,17 +2948,20 @@ int main(int argc, char *argv[])
         if (pad_new & PAD_SELECT) { refresh_mc(); refresh_usb(); toast("Lista atualizada%.0d", 0); }
         if (pad_new & PAD_L2) {
             mcSlot ^= 1;
+            snd_play(SND_TAB);
             refresh_mc();
             snprintf(ui.toast, sizeof(ui.toast), "Memory Card slot %d", mcSlot + 1);
             ui.toastErr = 0; ui.toastT = 120;
         }
         if ((pad_new & PAD_R2) && tab == TAB_CONV) {
             convFmt = (convFmt + 1) % 3;
+            snd_play(SND_SELECT);
             snprintf(ui.toast, sizeof(ui.toast), "Converter para: %s", FMT_NAME[convFmt]);
             ui.toastErr = 0; ui.toastT = 120;
         }
         if ((pad_new & PAD_R2) && tab == TAB_MC) {
             expFmt = (expFmt + 1) % 3;
+            snd_play(SND_SELECT);
             snprintf(ui.toast, sizeof(ui.toast), "Formato de exportacao: %s", FMT_NAME[expFmt]);
             ui.toastErr = 0; ui.toastT = 120;
         }
