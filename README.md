@@ -4,7 +4,7 @@ Gerenciador de saves com interface estilo dashboard.
 
 ## O que faz
 
-- Lista os saves do **Memory Card** (slot 1 / slot 2) em cards organizados:
+- Lista os saves do **Memory Card** (slot 1 / slot 2, ou todos os cartões de um **multitap**: 1A–1D e 2A–2D) em cards organizados:
   ícone por região (US / EU / JP / KR), nome da pasta, tamanho, data e hora.
 - **Exporta** Memory Card → pendrive / HD USB.
 - **Importa** pendrive / HD USB → Memory Card (pergunta antes de sobrescrever).
@@ -64,7 +64,7 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Círculo | Atualizar a lista |
 | L1 / R1 | Trocar de aba (Memory Card / USB / Converter) |
 | SELECT | Atualizar tudo (reler Memory Card e USB) |
-| L2 | Alternar slot 1 / slot 2 do Memory Card |
+| L2 | Trocar de Memory Card: slot 1 / 2, ou 1A–1D e 2A–2D com multitap |
 | R2 | Escolher o formato: exportação (aba Memory Card) ou destino (aba Converter) |
 | START | Menu de ferramentas (inclui Sair) |
 
@@ -76,7 +76,7 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 
 - **Verificar saves:** lê todos os arquivos de cada save e confere se existe `icon.sys`. Lista os que têm problema e oferece apagá-los.
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
-- **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para o outro slot, direto, sem passar pelo USB. Avisa se o save já existe e confere o espaço livre.
+- **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para outro slot, direto, sem passar pelo USB. Com multitap, pergunta qual slot é o destino. Avisa se o save já existe e confere o espaço livre.
 - **Som: Ligado/Desligado:** liga e desliga os efeitos sonoros.
 - **Acertar data e hora:** edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.

@@ -35,6 +35,7 @@
 #include <sbv_patches.h>
 #include <fileXio_rpc.h>
 #include <libmc.h>
+#include <libmtap.h>
 #include <libpad.h>
 #include <libcdvd.h>
 #include <osd_config.h>
@@ -129,6 +130,11 @@ static UI        ui;
 static Entry mcList[MAX_ENT],  usbList[MAX_ENT];
 static int   mcCount, usbCount;
 static int   tab = TAB_MC, mcSlot = 0, mcReady = 0, usbOk = 0, mcFreeKB = 0;
+/* Memory Cards: sem multitap sao 2 (porta 1 e 2); com multitap cada porta tem 4 slots (1A..1D, 2A..2D).
+ * mcSlot e o INDICE nesta lista (0..nCards-1). */
+static int   cardPort[8] = { 0, 1 }, cardSlot[8] = { 0, 0 }, cardTap[8], nCards = 2;
+#define MP(i) cardPort[i]
+#define MS(i) cardSlot[i]
 static int   cursorPos[4], topRow[4];
 static u32   frameNo;
 
@@ -523,12 +529,24 @@ static void render(void)
         }
     }
     if (tab == TAB_MC) {
-        float bx = W - M - 60;
-        text(bx - 8 - tw("SLOT", 0.45f), 70, 0.45f, C_MUTED, "SLOT");
-        for (i = 0; i < 2; i++) {
-            float sx = bx + i * 32;
-            if (i == mcSlot) { hgrad(sx, 64, 28, 24, C_ACC, C_ACC2); ctext(sx + 14, 69, 0.55f, C_DARK, i ? "2" : "1"); }
-            else             { rect(sx, 64, 28, 24, C_CARD);         ctext(sx + 14, 69, 0.55f, C_MUTED, i ? "2" : "1"); }
+        if (nCards <= 2) {
+            float bx = W - M - 60;
+            text(bx - 8 - tw("SLOT", 0.45f), 70, 0.45f, C_MUTED, "SLOT");
+            for (i = 0; i < 2; i++) {
+                float sx = bx + i * 32;
+                if (i == mcSlot) { hgrad(sx, 64, 28, 24, C_ACC, C_ACC2); ctext(sx + 14, 69, 0.55f, C_DARK, i ? "2" : "1"); }
+                else             { rect(sx, 64, 28, 24, C_CARD);         ctext(sx + 14, 69, 0.55f, C_MUTED, i ? "2" : "1"); }
+            }
+        } else {                                   /* multitap: mostra "1B  (2/8)" */
+            char nm[8], lb[32];
+            float w, sx;
+            card_name(mcSlot, nm, sizeof(nm));
+            snprintf(lb, sizeof(lb), "%s  (%d/%d)", nm, mcSlot + 1, nCards);
+            w = tw(lb, 0.55f) + 22;
+            sx = W - M - w;
+            text(sx - 8 - tw("SLOT", 0.45f), 70, 0.45f, C_MUTED, "SLOT");
+            hgrad(sx, 64, w, 24, C_ACC, C_ACC2);
+            ctext(sx + w / 2, 69, 0.55f, C_DARK, lb);
         }
     } else if (tab == TAB_CONV) {
         char cs[40];
@@ -734,12 +752,27 @@ static void progress(const char *msg, u32 done, u32 total)
     present();
 }
 
+static void card_name(int i, char *b, int n)
+{
+    if (cardTap[i]) snprintf(b, n, "%d%c", cardPort[i] + 1, 'A' + cardSlot[i]);
+    else            snprintf(b, n, "%d", cardPort[i] + 1);
+}
+
 static void toast(const char *fmt, int n)
 {
     snprintf(ui.toast, sizeof(ui.toast), fmt, n);
     ui.toastErr = (strstr(ui.toast, "alha") || strstr(ui.toast, "nao ") || strstr(ui.toast, "Conecte") || strstr(ui.toast, "Sem ")) ? 1 : 0;
     ui.toastT = 240;
     snd_play(ui.toastErr ? SND_ERR : SND_DONE);
+}
+
+/* aviso com texto pronto (err = 1 para erro) */
+static void toast_s(const char *msg, int err)
+{
+    snprintf(ui.toast, sizeof(ui.toast), "%s", msg);
+    ui.toastErr = err;
+    ui.toastT = 240;
+    snd_play(err ? SND_ERR : SND_DONE);
 }
 
 /* ============================================================
@@ -823,7 +856,7 @@ static int menu_run(const char *title, const char **items, int n)
 static int mc_list(int slot, const char *pat, sceMcTblGetDir *tbl, int max)
 {
     int n = 0;
-    mcGetDir(slot, 0, (char *)pat, 0, max, tbl);
+    mcGetDir(MP(slot), MS(slot), (char *)pat, 0, max, tbl);
     mcSync(0, NULL, &n);
     return n < 0 ? 0 : n;
 }
@@ -831,9 +864,9 @@ static int mc_list(int slot, const char *pat, sceMcTblGetDir *tbl, int max)
 static void mc_check(void)
 {
     int type, freec, fmt, ret = -10;
-    mcGetInfo(mcSlot, 0, &type, &freec, &fmt);
+    mcGetInfo(MP(mcSlot), MS(mcSlot), &type, &freec, &fmt);
     mcSync(0, NULL, &ret);
-    mcGetInfo(mcSlot, 0, &type, &freec, &fmt);   /* 2a chamada: estabiliza apos troca de cartao */
+    mcGetInfo(MP(mcSlot), MS(mcSlot), &type, &freec, &fmt);   /* 2a chamada: estabiliza apos troca de cartao */
     mcSync(0, NULL, &ret);
     mcReady = (ret >= -1) && (ret != -2) ? 1 : 0;
     if (ret == -1) mcReady = (fmt != 0);
@@ -1085,7 +1118,7 @@ static u8 *read_all(int isUsb, const char *path, int *outLen)
     u8 *buf = (u8 *)malloc(cap);
     if (!buf) return NULL;
     if (isUsb) fd = open(path, O_RDONLY);
-    else { mcOpen(mcSlot, 0, path, MC_RDONLY); mcSync(0, NULL, &fd); }
+    else { mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY); mcSync(0, NULL, &fd); }
     if (fd < 0) { free(buf); return NULL; }
     for (;;) {
         if (isUsb) r = read(fd, iobuf, CHUNK);
@@ -1486,7 +1519,7 @@ static void title_pump(int t, Entry *L, int N)
 static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
 {
     int fd = -1, r = 0, out, err = 0;
-    mcOpen(mcSlot, 0, src, MC_RDONLY);
+    mcOpen(MP(mcSlot), MS(mcSlot), src, MC_RDONLY);
     mcSync(0, NULL, &fd);
     if (fd < 0) return -1;
     out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
@@ -1509,7 +1542,7 @@ static int copy_usb_to_mc(const char *src, const char *dst, const char *label)
     int in, fd = -1, r = 0, w = 0, err = 0;
     in = open(src, O_RDONLY);
     if (in < 0) return -1;
-    mcOpen(mcSlot, 0, dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
+    mcOpen(MP(mcSlot), MS(mcSlot), dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
     mcSync(0, NULL, &fd);
     if (fd < 0) { close(in); return -2; }
     for (;;) {
@@ -1559,7 +1592,7 @@ static int import_folder(const Entry *e)
     int r = 0, fails = 0;
 
     snprintf(dst, sizeof(dst), "/%s", e->name);
-    mcMkDir(mcSlot, 0, dst);
+    mcMkDir(MP(mcSlot), MS(mcSlot), dst);
     mcSync(0, NULL, &r);                    /* ja existir nao e erro: sobrescreve arquivos */
 
     snprintf(dir, sizeof(dir), ROOT_DIR "/%s/%s", e->name, e->stamp);
@@ -1595,7 +1628,7 @@ static int wr_all(int fd, const void *buf, u32 n)
 static int mc_file_to_fd(const char *src, int out, const char *label)
 {
     int fd = -1, r = 0, total = 0;
-    mcOpen(mcSlot, 0, src, MC_RDONLY);
+    mcOpen(MP(mcSlot), MS(mcSlot), src, MC_RDONLY);
     mcSync(0, NULL, &fd);
     if (fd < 0) return -1;
     for (;;) {
@@ -1617,7 +1650,7 @@ static int mc_file_to_mem(const char *src, u8 *dst, u32 size, const char *label)
 {
     int fd = -1, r = 0;
     u32 got = 0;
-    mcOpen(mcSlot, 0, src, MC_RDONLY);
+    mcOpen(MP(mcSlot), MS(mcSlot), src, MC_RDONLY);
     mcSync(0, NULL, &fd);
     if (fd < 0) return -1;
     while (got < size) {
@@ -1640,7 +1673,7 @@ static int fd_to_mc(int in, u32 size, const char *dst, const char *label)
 {
     int fd = -1, r, w = 0, err = 0;
     u32 left = size;
-    mcOpen(mcSlot, 0, dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
+    mcOpen(MP(mcSlot), MS(mcSlot), dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
     mcSync(0, NULL, &fd);
     if (fd < 0) return -2;
     while (left) {
@@ -1663,7 +1696,7 @@ static int mem_to_mc(const u8 *src, u32 size, const char *dst, const char *label
 {
     int fd = -1, w = 0, r, err = 0;
     u32 off = 0;
-    mcOpen(mcSlot, 0, dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
+    mcOpen(MP(mcSlot), MS(mcSlot), dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
     mcSync(0, NULL, &fd);
     if (fd < 0) return -2;
     while (off < size) {
@@ -1756,7 +1789,7 @@ static int import_psu(const Entry *e)
     if (read(fd, h, 512) != 512 || !(ld16(h) & MC_ATTR_DIR)) { close(fd); return 1; }
 
     snprintf(dst, sizeof(dst), "/%s", e->name);
-    mcMkDir(mcSlot, 0, dst);
+    mcMkDir(MP(mcSlot), MS(mcSlot), dst);
     mcSync(0, NULL, &r);                         /* ja existir nao e erro */
     snprintf(lbl, sizeof(lbl), "%s", e->name);
 
@@ -1922,7 +1955,7 @@ static int import_max(const Entry *e)
     if (got != (long)decSz) { free(arch); return 1; }
 
     snprintf(dst, sizeof(dst), "/%s", e->name);
-    mcMkDir(mcSlot, 0, dst);
+    mcMkDir(MP(mcSlot), MS(mcSlot), dst);
     mcSync(0, NULL, &r);
 
     for (k = 0; k < (int)nfiles; k++) {
@@ -2310,7 +2343,7 @@ static int mc_read_check(const char *path, u32 expect)
 {
     int fd = -1, r = 0;
     u32 total = 0;
-    mcOpen(mcSlot, 0, path, MC_RDONLY);
+    mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY);
     mcSync(0, NULL, &fd);
     if (fd < 0) return 0;
     for (;;) {
@@ -2359,12 +2392,12 @@ static int mc_delete_save(const char *name)
     for (j = 0; j < n; j++) {
         if (subtbl[j].AttrFile & MC_ATTR_DIR) continue;
         snprintf(path, sizeof(path), "/%s/%s", name, (const char *)subtbl[j].EntryName);
-        mcDelete(mcSlot, 0, path);
+        mcDelete(MP(mcSlot), MS(mcSlot), path);
         mcSync(0, NULL, &r);
         if (r < 0) fails++;
     }
     snprintf(path, sizeof(path), "/%s", name);
-    mcDelete(mcSlot, 0, path);
+    mcDelete(MP(mcSlot), MS(mcSlot), path);
     mcSync(0, NULL, &r);
     if (r < 0) fails++;
     return fails;
@@ -2373,7 +2406,7 @@ static int mc_delete_save(const char *name)
 static int mc_format_card(void)
 {
     int r = 0;
-    mcFormat(mcSlot, 0);
+    mcFormat(MP(mcSlot), MS(mcSlot));
     mcSync(0, NULL, &r);
     return r;
 }
@@ -2386,17 +2419,17 @@ static int mc_copy_save(const char *name, int srcPort, int dstPort, const char *
     snprintf(pat, sizeof(pat), "/%s/*", name);
     n = mc_list(srcPort, pat, subtbl, MAX_ENT);
     snprintf(sp, sizeof(sp), "/%s", name);
-    mcMkDir(dstPort, 0, sp);
+    mcMkDir(MP(dstPort), MS(dstPort), sp);
     mcSync(0, NULL, &r);                              /* ja existir nao e erro */
     for (j = 0; j < n; j++) {
         int in = -1, out = -1, w = 0, err = 0;
         char f[96];
         if (subtbl[j].AttrFile & MC_ATTR_DIR) continue;
         snprintf(f, sizeof(f), "/%s/%s", name, (const char *)subtbl[j].EntryName);
-        mcOpen(srcPort, 0, f, MC_RDONLY);
+        mcOpen(MP(srcPort), MS(srcPort), f, MC_RDONLY);
         mcSync(0, NULL, &in);
         if (in < 0) { fails++; continue; }
-        mcOpen(dstPort, 0, f, MC_WRONLY | MC_CREAT | MC_TRUNC);
+        mcOpen(MP(dstPort), MS(dstPort), f, MC_WRONLY | MC_CREAT | MC_TRUNC);
         mcSync(0, NULL, &out);
         if (out < 0) { mcClose(in); mcSync(0, NULL, &r); fails++; continue; }
         for (;;) {
@@ -2421,9 +2454,9 @@ static int mc_copy_save(const char *name, int srcPort, int dstPort, const char *
 static int mc_port_ready(int port, int *freeKB)
 {
     int type, freec = 0, fmt = 0, ret = -10, ok;
-    mcGetInfo(port, 0, &type, &freec, &fmt);
+    mcGetInfo(MP(port), MS(port), &type, &freec, &fmt);
     mcSync(0, NULL, &ret);
-    mcGetInfo(port, 0, &type, &freec, &fmt);
+    mcGetInfo(MP(port), MS(port), &type, &freec, &fmt);
     mcSync(0, NULL, &ret);
     ok = (ret >= -1) && (ret != -2);
     if (ret == -1) ok = (fmt != 0);
@@ -2736,7 +2769,11 @@ static void tool_format(void)
     char m[96];
     int r;
     if (!backup_before()) return;
-    snprintf(m, sizeof(m), "Apaga TODOS os saves do slot %d. Continuar?", mcSlot + 1);
+    {
+        char nm[8];
+        card_name(mcSlot, nm, sizeof(nm));
+        snprintf(m, sizeof(m), "Apaga TODOS os saves do slot %s. Continuar?", nm);
+    }
     if (!confirm("FORMATAR MEMORY CARD", m)) return;
     if (!confirm("ULTIMO AVISO", "Isso NAO pode ser desfeito. Formatar mesmo?")) return;
     snprintf(ui.title, sizeof(ui.title), "FORMATANDO MEMORY CARD");
@@ -2832,20 +2869,49 @@ static void tool_copy(void)
 {
     int idx[MAX_ENT], k, i, fails = 0, copied = 0, dst = mcSlot ^ 1, freeKB = 0;
     u32 need = 0;
-    char m[96];
+    char m[96], ns[8], nd[8];
     if (!mcReady) { toast("Memory Card nao encontrado%.0d", 0); return; }
+    if (nCards < 2) { toast("Falha: so ha um slot de Memory Card%.0d", 0); return; }
     k = gather(mcList, mcCount, idx);
     if (k == 0) return;
-    if (!mc_port_ready(dst, &freeKB)) { toast("Falha: slot %d sem Memory Card legivel", dst + 1); return; }
+
+    if (nCards > 2) {                              /* multitap: escolhe o slot de destino */
+        static char lbl[8][24];
+        const char *it[8];
+        int map[8], cnt = 0, c;
+        for (i = 0; i < nCards; i++) {
+            char nm[8];
+            if (i == mcSlot) continue;
+            card_name(i, nm, sizeof(nm));
+            snprintf(lbl[cnt], sizeof(lbl[cnt]), "Slot %s", nm);
+            it[cnt] = lbl[cnt];
+            map[cnt++] = i;
+        }
+        c = menu_run("COPIAR PARA QUAL SLOT?", it, cnt);
+        if (c < 0) return;
+        dst = map[c];
+    }
+    card_name(mcSlot, ns, sizeof(ns));
+    card_name(dst, nd, sizeof(nd));
+
+    if (!mc_port_ready(dst, &freeKB)) {
+        snprintf(m, sizeof(m), "Falha: slot %s sem Memory Card legivel", nd);
+        toast_s(m, 1);
+        return;
+    }
     for (i = 0; i < k; i++) need += mcList[idx[i]].size + 3072;     /* margem p/ clusters e pasta */
-    if (need / 1024 > (u32)freeKB) { toast("Falha: sem espaco no slot %d", dst + 1); return; }
-    snprintf(m, sizeof(m), "Copiar %d save(s) do slot %d para o slot %d?", k, mcSlot + 1, dst + 1);
+    if (need / 1024 > (u32)freeKB) {
+        snprintf(m, sizeof(m), "Falha: sem espaco no slot %s", nd);
+        toast_s(m, 1);
+        return;
+    }
+    snprintf(m, sizeof(m), "Copiar %d save(s) do slot %s para o slot %s?", k, ns, nd);
     if (!confirm("COPIAR PARA OUTRO CARTAO", m)) return;
 
     g_done = 0; g_total = 0;
     for (i = 0; i < k; i++) g_total += mcList[idx[i]].size;
     if (g_total == 0) g_total = 1;
-    snprintf(ui.title, sizeof(ui.title), "COPIANDO SLOT %d PARA SLOT %d", mcSlot + 1, dst + 1);
+    snprintf(ui.title, sizeof(ui.title), "COPIANDO SLOT %s PARA SLOT %s", ns, nd);
     for (i = 0; i < k; i++) {
         Entry *e = &mcList[idx[i]];
         char pat[64];
@@ -2854,7 +2920,7 @@ static void tool_copy(void)
         snprintf(pat, sizeof(pat), "/%s", e->name);
         exists = mc_list(dst, pat, one, 2) > 0;
         if (exists) {
-            snprintf(m, sizeof(m), "%s ja existe no slot %d. Sobrescrever?", e->name, dst + 1);
+            snprintf(m, sizeof(m), "%.40s ja existe no slot %s. Sobrescrever?", e->name, nd);
             if (!confirm("SAVE JA EXISTE", m)) continue;
         }
         ui.busy = 1;
@@ -3112,6 +3178,21 @@ static void do_mc_tools(void)
 /* ============================================================
  *  Inicializacao
  * ============================================================ */
+/* monta a lista de cartoes: com multitap numa porta, entram os 4 slots dela */
+static void cards_init(void)
+{
+    int p, sl, n = 0;
+    for (p = 0; p < 2; p++) {
+        int tap = (mtapGetConnection(p) == 1) ? 1 : 0;
+        for (sl = 0; sl < (tap ? 4 : 1); sl++) {
+            cardPort[n] = p; cardSlot[n] = sl; cardTap[n] = tap;
+            n++;
+        }
+    }
+    if (n != nCards) { nCards = n; mcSlot = 0; }
+    if (mcSlot >= nCards) mcSlot = 0;
+}
+
 static void init_iop(void)
 {
     int ret;
@@ -3123,6 +3204,7 @@ static void init_iop(void)
     sbv_patch_disable_prefix_check();
 
     SifLoadModule("rom0:XSIO2MAN", 0, NULL);
+    SifLoadModule("rom0:XMTAPMAN", 0, NULL);          /* multitap (ignora se a BIOS nao tiver) */
     SifLoadModule("rom0:XPADMAN", 0, NULL);
     SifLoadModule("rom0:XMCMAN", 0, NULL);
     SifLoadModule("rom0:XMCSERV", 0, NULL);
@@ -3138,6 +3220,9 @@ static void init_iop(void)
 
     fileXioInit();
     sceCdInit(SCECdINoD);
+    mtapInit();
+    mtapPortOpen(0);
+    mtapPortOpen(1);
     mcInit(MC_TYPE_XMC);
     padInit(0);
     padPortOpen(0, 0, padbuf);
@@ -3193,6 +3278,7 @@ int main(int argc, char *argv[])
     ui.busy = 1; ui.total = 100;
     for (i = 0; i < 120; i++) {                 /* ~2s para o USB montar */
         progress("Procurando Memory Card e USB...", i, 120);
+        if (i == 5 || i == 20) cards_init();                   /* o multitap demora para ser detectado */
         if (i > 20 && usb_ready()) break;
     }
     ui.busy = 0;
@@ -3203,6 +3289,12 @@ int main(int argc, char *argv[])
 
     for (;;) {
         read_pad();
+
+        if ((frameNo % 180) == 0) {              /* reavalia o multitap de tempos em tempos (detecta tardio) */
+            int oldN = nCards;
+            cards_init();
+            if (nCards != oldN) refresh_mc();
+        }
 
         L = (tab == TAB_MC) ? mcList : usbList;
         N = (tab == TAB_MC) ? mcCount : usbCount;
@@ -3240,12 +3332,14 @@ int main(int argc, char *argv[])
             if (tab == TAB_MC)  refresh_mc();
             if (tab == TAB_USB || tab == TAB_CONV) refresh_usb();
         }
-        if (pad_new & PAD_SELECT) { refresh_mc(); refresh_usb(); toast("Lista atualizada%.0d", 0); }
+        if (pad_new & PAD_SELECT) { cards_init(); refresh_mc(); refresh_usb(); toast("Lista atualizada%.0d", 0); }
         if (pad_new & PAD_L2) {
-            mcSlot ^= 1;
+            char nm[8];
+            if (nCards > 1) mcSlot = (mcSlot + 1) % nCards;
             snd_play(SND_TAB);
             refresh_mc();
-            snprintf(ui.toast, sizeof(ui.toast), "Memory Card slot %d", mcSlot + 1);
+            card_name(mcSlot, nm, sizeof(nm));
+            snprintf(ui.toast, sizeof(ui.toast), "Memory Card slot %s", nm);
             ui.toastErr = 0; ui.toastT = 120;
         }
         if ((pad_new & PAD_R2) && tab == TAB_CONV) {

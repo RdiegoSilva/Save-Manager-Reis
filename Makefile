@@ -5,7 +5,7 @@ EE_OBJS = main.o lzari.o sound.o \
           usbd_irx.o bdm_irx.o bdmfs_fatfs_irx.o usbmass_bd_irx.o \
           freesd_irx.o audsrv_irx.o
 
-EE_LIBS = -lgskit -ldmakit -lpad -lmc -lcdvd -lfileXio -lpatches -laudsrv -lm
+EE_LIBS = -lgskit -ldmakit -lpad -lmtap -lmc -lcdvd -lfileXio -lpatches -laudsrv -lm
 
 EE_CFLAGS += -O2 -Wall -DNEWLIB_PORT_AWARE
 
