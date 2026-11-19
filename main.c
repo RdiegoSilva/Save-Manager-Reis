@@ -57,7 +57,7 @@ extern unsigned char audsrv_irx[];       extern unsigned int size_audsrv_irx;
 
 /* ---------------- Constantes ---------------- */
 #define APP_NAME      "SAVE MANAGER REIS"
-#define APP_VERSION   "v1.1"
+#define APP_VERSION   "v1.2"
 #define ROOT_DIR      "mass:/SaveManagerReis"
 #define MAX_ENT       128
 #define CHUNK         (32 * 1024)
@@ -102,6 +102,8 @@ typedef struct {
     int  sel;          /* marcado                                */
     u8   kind;         /* FMT_DIR / FMT_PSU / FMT_MAX (aba USB)  */
     char path[128];    /* caminho completo do backup (aba USB)   */
+    char title[36];    /* nome do jogo (titulo do icon.sys), ou vazio */
+    u8   titleDone;    /* ja tentou ler o titulo                 */
 } Entry;
 
 typedef struct {
@@ -115,6 +117,9 @@ typedef struct {
     int    toastErr;
     int    menu, mn, msel;          /* menu de opcoes (modal com lista) */
     const char *mitem[10];
+    int    extraN;                  /* linhas extras no modal de confirmacao (0..3) */
+    char   extra[3][96];
+    u64    extraCol[3];
 } UI;
 
 /* ---------------- Globais ---------------- */
@@ -409,6 +414,12 @@ static void draw_icon(int slot, const Icon *ic, float x, float y, float sz)
                               (float)ICON_SZ, (float)ICON_SZ, 1, GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x80, 0x00));
 }
 
+static void fmt_size(char *b, int n, u32 sz)
+{
+    if (sz >= 1024 * 1024) snprintf(b, n, "%u.%u MB", sz >> 20, ((sz & 0xFFFFF) * 10) >> 20);
+    else                   snprintf(b, n, "%u KB", (sz + 1023) >> 10);
+}
+
 static void draw_card(float x, float y, float w, float h, const Entry *e, int isCur, int isUsb, const Icon *ic, int slot)
 {
     char buf[48];
@@ -432,8 +443,7 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     }
 
     /* tamanho / data / hora */
-    if (e->size >= 1024 * 1024) snprintf(buf, sizeof(buf), "%u.%u MB", e->size >> 20, ((e->size & 0xFFFFF) * 10) >> 20);
-    else                         snprintf(buf, sizeof(buf), "%u KB", (e->size + 1023) >> 10);
+    fmt_size(buf, sizeof(buf), e->size);
     text(x + 58, y + 10, 0.50f, C_ACC, buf);
     text(x + 58, y + 26, 0.45f, C_TXT, e->date);
     text(x + 58, y + 40, 0.45f, C_MUTED, e->time);
@@ -443,8 +453,15 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     }
 
     /* nome */
-    fit(buf, e->name, w - 16, 0.50f);
-    text(x + 8, y + 58, 0.50f, C_TXT, buf);
+    if (e->title[0]) {                        /* nome do jogo em cima, pasta embaixo */
+        fit(buf, e->title, w - 16, 0.40f);
+        text(x + 8, y + 54, 0.40f, C_TXT, buf);
+        fit(buf, e->name, w - 16, 0.32f);
+        text(x + 8, y + 67, 0.32f, C_MUTED, buf);
+    } else {
+        fit(buf, e->name, w - 16, 0.50f);
+        text(x + 8, y + 58, 0.50f, C_TXT, buf);
+    }
 
     if (e->sel) {
         rect(x + w - 22, y + 8, 16, 16, C_GREEN);
@@ -549,7 +566,9 @@ static void render(void)
             rect(tx, 96, tile, 26, C_CARD);
             rect(tx, 96, 3, 26, i == 1 ? C_GREEN : C_ACC);
             text(tx + 11, 103, 0.40f, C_MUTED, lab[i]);
-            text(tx + tile - 8 - tw(val[i], 0.50f), 102, 0.50f, C_TXT, val[i]);
+            text(tx + tile - 8 - tw(val[i], 0.50f), 102, 0.50f,
+                 (tab == TAB_MC && i == 2 && mcReady && mcFreeKB < 256) ? C_RED :
+                 (tab == TAB_MC && i == 2 && mcReady && mcFreeKB < 1024) ? RGBA(255, 200, 70, 0x80) : C_TXT, val[i]);
         }
     }
 
@@ -655,23 +674,25 @@ static void render(void)
         }
         text(mx + 14, my + mh - 18, 0.38f, C_MUTED, "X escolher    O voltar");
     } else if (ui.busy || ui.modal) {
-        float bx = (W - 440) / 2, by = (H - 130) / 2;
+        int nx = ui.modal ? ui.extraN : 0, k;
+        float bh = 130 + nx * 18, bx = (W - 440) / 2, by = (H - bh) / 2, yb = by + 92 + nx * 18;
         rect(0, 0, W, H, C_DIM);
-        rect(bx + 4, by + 5, 440, 130, C_SHADOW);
-        rect(bx, by, 440, 130, C_BAR);
+        rect(bx + 4, by + 5, 440, bh, C_SHADOW);
+        rect(bx, by, 440, bh, C_BAR);
         hgrad(bx, by, 440, 4, C_ACC, C_ACC2);
         ctext(W / 2, by + 16, 0.7f, C_TXT, ui.title);
-        ctext(W / 2, by + 52, 0.48f, C_MUTED, ui.msg);
+        ctext(W / 2, by + 48, 0.48f, C_MUTED, ui.msg);
+        for (k = 0; k < nx; k++) ctext(W / 2, by + 70 + k * 18, 0.44f, ui.extraCol[k], ui.extra[k]);
         if (ui.busy) {
             float pct = ui.total ? (float)ui.done / (float)ui.total : 0.0f;
             if (pct > 1.0f) pct = 1.0f;
             rect(bx + 30, by + 92, 380, 16, C_CARD);
             hgrad(bx + 30, by + 92, 380 * pct, 16, C_ACC, C_ACC2);
         } else if (ui.modal == 2) {
-            key_btn(W / 2 - 30, by + 92, 0, C_BLUE, "OK");
+            key_btn(W / 2 - 30, yb, 0, C_BLUE, "OK");
         } else {
-            key_btn(W / 2 - 100, by + 92, 0, C_BLUE, "Sim");
-            key_btn(W / 2 + 20, by + 92, 3, C_RED, "Nao");
+            key_btn(W / 2 - 100, yb, 0, C_BLUE, "Sim");
+            key_btn(W / 2 + 20, yb, 3, C_RED, "Nao");
         }
     }
 }
@@ -680,6 +701,7 @@ static void present(void)
 {
     gsKit_queue_exec(gsGlobal);
     gsKit_sync_flip(gsGlobal);
+    snd_update();
     frameNo++;
 }
 
@@ -735,6 +757,7 @@ static int confirm(const char *title, const char *msg)
         present();
     }
     ui.modal = 0;
+    ui.extraN = 0;
     return res;
 }
 
@@ -1312,6 +1335,131 @@ static void icon_pump(int t, Entry *L, int N)
     }
     icons[t][i] = icon_load(t == TAB_USB, &L[i]);
     if (!icons[t][i]) iconFail[t][i] = 1;
+}
+
+
+/* ---- nome do jogo: titulo do icon.sys (Shift-JIS, offset 0xC0, 68 bytes) ----
+ * Converte o que for ASCII / letras e numeros de largura total para texto simples.
+ * Kanji/kana sao ignorados (a fonte do app so tem ASCII); se nao sobrar texto, usa o nome da pasta. */
+static void sjis_title(const u8 *t, int nl, char *out, int max)
+{
+    int i = 0, o = 0, alnum = 0;
+    while (i < 68 && t[i] && o < max - 2) {
+        u8 c = t[i], d;
+        char ch = 0;
+        int adv = 1;
+        if (i == nl && o > 0 && out[o - 1] != ' ') out[o++] = ' ';       /* quebra de linha do titulo */
+        if (c >= 0x20 && c < 0x7F) {
+            ch = (char)c;
+        } else if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC)) {
+            d = t[i + 1];
+            adv = d ? 2 : 1;
+            if (c == 0x82) {
+                if (d >= 0x4F && d <= 0x58)      ch = (char)('0' + (d - 0x4F));
+                else if (d >= 0x60 && d <= 0x79) ch = (char)('A' + (d - 0x60));
+                else if (d >= 0x81 && d <= 0x9A) ch = (char)('a' + (d - 0x81));
+            } else if (c == 0x81) {
+                switch (d) {
+                case 0x40: ch = ' ';  break;
+                case 0x41: ch = ',';  break;
+                case 0x42: case 0x44: ch = '.'; break;
+                case 0x46: ch = ':';  break;
+                case 0x47: ch = ';';  break;
+                case 0x48: ch = '?';  break;
+                case 0x49: ch = '!';  break;
+                case 0x5E: ch = '/';  break;
+                case 0x60: ch = '~';  break;
+                case 0x65: case 0x66: ch = '\''; break;
+                case 0x67: case 0x68: ch = '"';  break;
+                case 0x69: ch = '(';  break;
+                case 0x6A: ch = ')';  break;
+                case 0x7B: ch = '+';  break;
+                case 0x7C: ch = '-';  break;
+                case 0x93: ch = '%';  break;
+                case 0x94: ch = '#';  break;
+                case 0x95: ch = '&';  break;
+                case 0x96: ch = '*';  break;
+                case 0x97: ch = '@';  break;
+                default: break;
+                }
+            }
+        }
+        i += adv;
+        if (!ch) continue;
+        if (ch == ' ' && (o == 0 || out[o - 1] == ' ')) continue;
+        out[o++] = ch;
+        if ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) alnum++;
+    }
+    while (o > 0 && out[o - 1] == ' ') o--;
+    out[o] = 0;
+    if (alnum < 2) out[0] = 0;
+}
+
+/* le o icon.sys de dentro de um .psu (entradas de 512 bytes + dados alinhados em 1024) */
+static int psu_read_sys(const char *path, u8 *dst, int cap)
+{
+    u8 h[512];
+    int fd, k, got = 0;
+    u32 total;
+    fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    if (read(fd, h, 512) != 512 || !(ld16(h) & MC_ATTR_DIR)) { close(fd); return 0; }
+    total = ld32(h + 4);                                  /* n de entradas (inclui . e ..) */
+    if (total > 512) total = 512;
+    for (k = 0; k < (int)total; k++) {
+        u32 sz, pad;
+        if (read(fd, h, 512) != 512) break;
+        sz = ld32(h + 4);
+        pad = (1024 - (sz & 1023)) & 1023;
+        if (!(ld16(h) & MC_ATTR_DIR) && !strncmp((const char *)h + 64, "icon.sys", 9)) {
+            int n = (int)(sz < (u32)cap ? sz : (u32)cap);
+            got = read(fd, dst, n);
+            break;
+        }
+        if (sz || pad) lseek(fd, (off_t)sz + (off_t)pad, SEEK_CUR);
+    }
+    close(fd);
+    return got > 0 ? got : 0;
+}
+
+static void title_load(int isUsb, Entry *e)
+{
+    char path[200];
+    u8 *sys = NULL, tmp[0x144];
+    int sl = 0;
+
+    e->title[0] = 0;
+    if (!isUsb) {
+        snprintf(path, sizeof(path), "/%s/icon.sys", e->name);
+        sys = read_all(0, path, &sl);
+    } else if (e->kind == FMT_DIR) {
+        snprintf(path, sizeof(path), "%s/icon.sys", e->path);
+        sys = read_all(1, path, &sl);
+    } else if (e->kind == FMT_PSU) {
+        sl = psu_read_sys(e->path, tmp, sizeof(tmp));
+        if (sl >= 0x104 && !memcmp(tmp, "PS2D", 4)) sjis_title(tmp + 0xC0, (int)ld16(tmp + 6), e->title, sizeof(e->title));
+        return;
+    } else {
+        return;                                       /* .max e comprimido: usa o nome da pasta */
+    }
+    if (!sys) return;
+    if (sl >= 0x104 && !memcmp(sys, "PS2D", 4))
+        sjis_title(sys + 0xC0, (int)ld16(sys + 6), e->title, sizeof(e->title));
+    free(sys);
+}
+
+/* le 1 titulo por quadro (o do cursor primeiro, depois os visiveis) */
+static void title_pump(int t, Entry *L, int N)
+{
+    int first = topRow[t] * 4, last = first + gridRows * 4, i, c = cursorPos[t];
+    if (last > N) last = N;
+    if (c >= first && c < last && !L[c].titleDone) i = c;
+    else {
+        for (i = first; i < last; i++) if (!L[i].titleDone) break;
+        if (i >= last) return;
+    }
+    L[i].titleDone = 1;
+    title_load(t != TAB_MC, &L[i]);
 }
 
 static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
@@ -2400,6 +2548,49 @@ static int mc_has(const char *name)
     return 0;
 }
 
+static Entry *mc_find(const char *name)
+{
+    int i;
+    for (i = 0; i < mcCount; i++) if (!strcmp(mcList[i].name, name)) return &mcList[i];
+    return NULL;
+}
+
+/* "dd/mm/aa" + "hh:mm" -> minutos desde 2000 (ou -1 se invalido) */
+static long ent_minutes(const Entry *e)
+{
+    int d, mo, y, h, mi;
+    if (sscanf(e->date, "%d/%d/%d", &d, &mo, &y) != 3) return -1;
+    if (sscanf(e->time, "%d:%d", &h, &mi) != 2) return -1;
+    return ((((long)y * 12 + mo) * 31 + d) * 24 + h) * 60 + mi;
+}
+
+/* preenche as linhas extras do dialogo: cartao x backup */
+static void fill_compare(const Entry *b, const Entry *c)
+{
+    char sa[24], sb[24];
+    long kb = ent_minutes(b), kc = ent_minutes(c);
+    fmt_size(sa, sizeof(sa), c->size);
+    fmt_size(sb, sizeof(sb), b->size);
+    snprintf(ui.extra[0], sizeof(ui.extra[0]), "No cartao:  %s %s  -  %s", c->date, c->time, sa);
+    if (b->kind != FMT_DIR)
+        snprintf(ui.extra[1], sizeof(ui.extra[1]), "No backup:  %s %s  -  %s  (%s)", b->date, b->time, sb, FMT_NAME[b->kind]);
+    else
+        snprintf(ui.extra[1], sizeof(ui.extra[1]), "No backup:  %s %s  -  %s", b->date, b->time, sb);
+    ui.extraCol[0] = C_TXT;
+    ui.extraCol[1] = C_TXT;
+    if (kb < 0 || kc < 0) {
+        snprintf(ui.extra[2], sizeof(ui.extra[2]), "Datas indisponiveis para comparar");
+        ui.extraCol[2] = C_MUTED;
+    } else if (kc > kb) {
+        snprintf(ui.extra[2], sizeof(ui.extra[2]), "ATENCAO: o cartao foi alterado depois deste backup");
+        ui.extraCol[2] = C_RED;
+    } else {
+        snprintf(ui.extra[2], sizeof(ui.extra[2]), "O backup e posterior a ultima alteracao do cartao");
+        ui.extraCol[2] = C_GREEN;
+    }
+    ui.extraN = 3;
+}
+
 static void do_import(void)
 {
     int idx[MAX_ENT], k, i, fails = 0;
@@ -2415,14 +2606,21 @@ static void do_import(void)
         /* pode ser sobrescrita; so avisa quando claramente nao cabe */
         int allExist = 1;
         for (i = 0; i < k; i++) if (!mc_has(usbList[idx[i]].name)) allExist = 0;
-        if (!allExist) { toast("Sem espaco no Memory Card%.0d", 0); return; }
+        if (!allExist) {
+            char m[96];
+            snprintf(m, sizeof(m), "Precisa de %u KB, livre %d KB", (unsigned)(need >> 10), mcFreeKB);
+            info("SEM ESPACO NO MEMORY CARD", m);
+            return;
+        }
     }
 
     for (i = 0; i < k; i++) {
-        if (mc_has(usbList[idx[i]].name)) {
+        Entry *b = &usbList[idx[i]], *c = mc_find(b->name);
+        if (c) {
             char m[96];
-            snprintf(m, sizeof(m), "%s ja existe. Sobrescrever?", usbList[idx[i]].name);
-            if (!confirm("SAVE JA EXISTE", m)) { usbList[idx[i]].sel = -1; }
+            snprintf(m, sizeof(m), "%.40s ja existe. Sobrescrever?", b->name);
+            fill_compare(b, c);
+            if (!confirm("SAVE JA EXISTE", m)) { b->sel = -1; }
         }
     }
 
@@ -2979,6 +3177,12 @@ int main(int argc, char *argv[])
                 }
                 if (icons[tab][ci]) { icon_spin(); icon_render(icons[tab][ci], gCos, gSin); }   /* icone selecionado gira */
             }
+        }
+
+        if (tab != TAB_NET) {
+            Entry *LT = (tab == TAB_MC) ? mcList : usbList;
+            int NT = (tab == TAB_MC) ? mcCount : usbCount;
+            if (NT > 0) title_pump(tab, LT, NT);
         }
 
         if (ui.toastT > 0) ui.toastT--;

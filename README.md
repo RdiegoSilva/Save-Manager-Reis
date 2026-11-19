@@ -9,6 +9,9 @@ Gerenciador de saves com interface estilo dashboard.
 - **Exporta** Memory Card → pendrive / HD USB.
 - **Importa** pendrive / HD USB → Memory Card (pergunta antes de sobrescrever).
 - **Converte direto** nos formatos **PSU** e **MAX** (exportar e importar), além da pasta normal.
+- Mostra o **nome do jogo** (título do `icon.sys`) no card, com a pasta embaixo. Funciona em Memory Card, backups em Pasta e PSU; em MAX (compactado) e em títulos só em japonês aparece o nome da pasta.
+- Ao importar um save que **já existe** no cartão, o aviso compara data/hora e tamanho do cartão e do backup e diz se o cartão foi alterado depois do backup.
+- Espaço livre do Memory Card no quadro **LIVRE** (amarelo abaixo de 1 MB, vermelho abaixo de 256 KB); se faltar espaço ao importar, o aviso mostra quanto precisa e quanto há livre.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
 - **Ferramentas do Memory Card** (START): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
 - Aba **CONVERTER**: Pasta ⇄ PSU ⇄ MAX direto no pendrive.
