@@ -98,7 +98,7 @@ enum { FMT_DIR = 0, FMT_PSU = 1, FMT_MAX = 2, FMT_CBS = 3, FMT_SPS = 4, FMT_XPS 
 /* ---------------- Estruturas ---------------- */
 typedef struct {
     char name[40];     /* pasta do save (ex.: BASLUS-20552GTA3) */
-    char stamp[24];    /* backup: AAAA-MM-DD_HH-MM-SS            */
+    char stamp[40];    /* backup: AAAA-MM-DD_HH-MM-SS (+ nome)   */
     char date[12];     /* dd/mm/aa                               */
     char time[8];      /* hh:mm                                  */
     u32  size;         /* bytes                                  */
@@ -120,7 +120,7 @@ typedef struct {
     int    toastT;
     int    toastErr;
     int    menu, mn, msel;          /* menu de opcoes (modal com lista) */
-    const char *mitem[16];
+    const char *mitem[20];
     int    extraN;                  /* linhas extras no modal de confirmacao (0..3) */
     char   extra[3][96];
     u64    extraCol[3];
@@ -257,7 +257,7 @@ static int clkT;
 static int clkEditing = 0, clkSel = 0, clkEd[5];     /* editor: dia, mes, ano, hora, minuto */
 /* entrada de texto (busca) */
 static int  inEditing = 0, inLen = 0, inCh = 0;
-static char inBuf[24];
+static char inBuf[40];
 static const char *inTitle = "";
 static const char IN_CS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
 /* tela de detalhes do save */
@@ -715,7 +715,7 @@ static void render(void)
 
     /* ---- janela de progresso / confirmacao ---- */
     if (ui.menu) {
-        float rh = ui.mn > 11 ? 23.0f : 26.0f;
+        float rh = ui.mn > 14 ? 21.0f : (ui.mn > 11 ? 23.0f : 26.0f);
         float mw = 500, mh = 66 + ui.mn * rh, mx = (W - mw) / 2, my = (H - mh) / 2 - 10;
         int k;
         rect(0, 0, W, H, C_DIM);
@@ -927,7 +927,7 @@ static int menu_run(const char *title, const char **items, int n)
 {
     int res = -2, k;
     snprintf(ui.title, sizeof(ui.title), "%s", title);
-    for (k = 0; k < n && k < 16; k++) ui.mitem[k] = items[k];
+    for (k = 0; k < n && k < 20; k++) ui.mitem[k] = items[k];
     ui.mn = n; ui.msel = 0; ui.menu = 1;
     while (res == -2) {
         read_pad();
@@ -1856,7 +1856,7 @@ static void view_apply_all(void)
 static int text_input(const char *title, char *buf, int max)
 {
     const int ncs = (int)sizeof(IN_CS) - 1;
-    int done = 0, ok = 0, lim = max - 1 < 23 ? max - 1 : 23;
+    int done = 0, ok = 0, lim = max - 1 < (int)sizeof(inBuf) - 1 ? max - 1 : (int)sizeof(inBuf) - 1;
     snprintf(inBuf, sizeof(inBuf), "%.*s", lim, buf);
     inLen = (int)strlen(inBuf);
     inCh = 0;
@@ -3941,10 +3941,226 @@ static void config_poll(void)
     if (memcmp(v, cfgSaved, sizeof(v)) != 0 && ++cfgStable >= 90) config_save();
 }
 
+/* ---------------- renomear save (Memory Card) ou backup (USB) ---------------- */
+static int name_ok(const char *n)
+{
+    return safe_name(n) && n[0] != '.' && !strpbrk(n, "*?\"<>|");
+}
+
+static void tool_rename(void)
+{
+    int isUsb = (tab != TAB_MC), N = isUsb ? usbCount : mcCount;
+    Entry *e;
+    char old[40], nn[40], m[96];
+
+    if (N <= 0 || cursorPos[tab] < 0 || cursorPos[tab] >= N) { toast("Selecione um save na lista%.0d", 0); return; }
+    e = isUsb ? &usbList[cursorPos[tab]] : &mcList[cursorPos[tab]];
+
+    if (!isUsb) {                                           /* pasta do save no Memory Card */
+        int r = 0;
+        char op[64], np[64];
+        if (!mcReady) { toast("Memory Card nao encontrado%.0d", 0); return; }
+        snprintf(old, sizeof(old), "%s", e->name);
+        snprintf(nn, sizeof(nn), "%s", old);
+        if (!text_input("NOVO NOME DA PASTA DO SAVE", nn, sizeof(nn))) return;
+        if (!name_ok(nn)) { toast_s("Nome invalido (ate 31 caracteres, sem * ? / \\ :)", 1); return; }
+        if (!strcmp(nn, old)) return;
+        if (mc_has(nn)) { toast_s("Falha: ja existe um save com esse nome", 1); return; }
+        snprintf(ui.extra[0], sizeof(ui.extra[0]), "O jogo procura o save pelo nome da pasta.");
+        snprintf(ui.extra[1], sizeof(ui.extra[1]), "Com outro nome, ele pode nao encontrar o save.");
+        ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_RED;
+        ui.extraN = 2;
+        snprintf(m, sizeof(m), "Renomear %.30s para %.30s?", old, nn);
+        if (!confirm("RENOMEAR SAVE", m)) return;
+        snprintf(op, sizeof(op), "/%s", old);
+        snprintf(np, sizeof(np), "/%s", nn);
+        mcRename(MP(mcSlot), MS(mcSlot), op, np);
+        mcSync(0, NULL, &r);
+        refresh_mc();                                       /* confere pelo que o cartao realmente tem */
+        if (mc_has(nn) && !mc_has(old)) toast_s("Save renomeado", 0);
+        else                            toast_s("Falha ao renomear (o cartao nao aceitou)", 1);
+        return;
+    }
+
+    /* backup no USB: renomeia o "nome do backup" (a parte depois da pasta do save) */
+    if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB%.0d", 0); return; }
+    if (e->kind == FMT_VMC) { info("CARTAO VIRTUAL", "Para renomear um VMC, renomeie o arquivo .bin em mass:/VMC"); return; }
+    {
+        char oldp[128], newp[160], parent[128], *sl;
+        const char *ext = (e->kind == FMT_DIR) ? "" : e->path + strlen(e->path) - 4;     /* ".psu", ".max"... */
+        struct stat st;
+        snprintf(oldp, sizeof(oldp), "%s", e->path);
+        snprintf(old, sizeof(old), "%s", e->stamp);
+        snprintf(nn, sizeof(nn), "%s", old);
+        if (!text_input("NOVO NOME DO BACKUP (mantenha a data)", nn, sizeof(nn))) return;
+        if (!nn[0] || strlen(nn) > 35 || !name_ok(nn)) { toast_s("Nome invalido para o backup", 1); return; }
+        if (!strcmp(nn, old)) return;
+        snprintf(parent, sizeof(parent), "%s", oldp);
+        sl = strrchr(parent, '/');
+        if (!sl) return;
+        *sl = 0;
+        snprintf(newp, sizeof(newp), "%s/%s%s", parent, nn, ext);
+        if (stat(newp, &st) == 0) { toast_s("Falha: ja existe um backup com esse nome", 1); return; }
+        snprintf(m, sizeof(m), "Renomear %.30s para %.30s?", old, nn);
+        if (!confirm("RENOMEAR BACKUP", m)) return;
+        if (rename(oldp, newp) == 0) { refresh_usb(); toast_s("Backup renomeado", 0); }
+        else                         toast_s("Falha ao renomear o backup", 1);
+    }
+}
+
+/* ---------------- recuperar save corrompido ---------------- */
+#define SALV_CHUNK 1024
+
+/* le um arquivo do cartao: primeiro inteiro (3 tentativas); se falhar, por pedacos de 1 KB
+ * (3 tentativas cada); o que nao for possivel ler vira zeros. 0 = completo, 1 = parcial, -1 = nao abriu */
+static int salvage_file(const char *path, u8 *dst, u32 size, u32 *bad)
+{
+    int fd = -1, r = 0, tries;
+    u32 off, n, got;
+    *bad = 0;
+    if (size == 0) return 0;
+    for (tries = 0; tries < 3; tries++) {
+        int ok = 1;
+        fd = -1;
+        mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY);
+        mcSync(0, NULL, &fd);
+        if (fd < 0) continue;
+        got = 0;
+        while (got < size) {
+            n = size - got;
+            if (n > CHUNK) n = CHUNK;
+            mcRead(fd, iobuf, (int)n);
+            mcSync(0, NULL, &r);
+            if (r <= 0) { ok = 0; break; }
+            memcpy(dst + got, iobuf, (size_t)r);
+            got += (u32)r;
+        }
+        mcClose(fd); mcSync(0, NULL, &r);
+        if (ok && got == size) return 0;
+    }
+    fd = -1;
+    mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY);
+    mcSync(0, NULL, &fd);
+    if (fd < 0) return -1;
+    memset(dst, 0, size);
+    for (off = 0; off < size; off += SALV_CHUNK) {
+        int ok = 0;
+        n = size - off;
+        if (n > SALV_CHUNK) n = SALV_CHUNK;
+        for (tries = 0; tries < 3 && !ok; tries++) {
+            mcSeek(fd, (int)off, 0);
+            mcSync(0, NULL, &r);
+            if (r < 0) continue;
+            mcRead(fd, iobuf, (int)n);
+            mcSync(0, NULL, &r);
+            if (r == (int)n) { memcpy(dst + off, iobuf, n); ok = 1; }
+        }
+        if (!ok) { memset(dst + off, 0, n); *bad += n; }
+    }
+    mcClose(fd); mcSync(0, NULL, &r);
+    return *bad ? 1 : 0;
+}
+
+static void tool_recover_save(void)
+{
+    Entry tmp;
+    Now now;
+    char old[40], pat[64], path[96], stamp[40], d1[128], m[96];
+    int n, i, nOk = 0, nPart = 0, nFail = 0, hasIcon = 0, isPs1, rc;
+    u32 lost = 0;
+
+    if (tab != TAB_MC) { toast("Va para a aba Memory Card%.0d", 0); return; }
+    if (!mcReady) { toast("Memory Card nao encontrado%.0d", 0); return; }
+    if (mcCount <= 0 || cursorPos[TAB_MC] < 0 || cursorPos[TAB_MC] >= mcCount) { toast("Selecione um save na lista%.0d", 0); return; }
+    if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB (copia segura)%.0d", 0); return; }
+
+    snprintf(old, sizeof(old), "%s", mcList[cursorPos[TAB_MC]].name);
+    isPs1 = mcList[cursorPos[TAB_MC]].ps1;
+    snprintf(m, sizeof(m), "Recuperar %.31s? Antes, faz uma copia segura no USB.", old);
+    if (!confirm("RECUPERAR SAVE", m)) return;
+
+    /* 1) le tudo, com varias tentativas; guarda em memoria */
+    pk_free();
+    snprintf(pat, sizeof(pat), "/%s/*", old);
+    n = mc_list(mcSlot, pat, subtbl, MAX_ENT);
+    snprintf(ui.title, sizeof(ui.title), "RECUPERANDO %.30s", old);
+    g_multi = 0;
+    ui.busy = 1;
+    for (i = 0; i < n; i++) {
+        PkFile *f;
+        u32 bad = 0, sz = subtbl[i].FileSizeByte;
+        const char *nm = (const char *)subtbl[i].EntryName;
+        int r;
+        if (subtbl[i].AttrFile & MC_ATTR_DIR) continue;
+        progress(nm, (u32)i, (u32)(n ? n : 1));
+        if (!strcmp(nm, "icon.sys")) hasIcon = 1;
+        f = pk_add(nm, sz, (const u8 *)&subtbl[i]._Create, (const u8 *)&subtbl[i]._Modify);
+        if (!f) { nFail++; continue; }
+        snprintf(path, sizeof(path), "/%s/%s", old, nm);
+        r = salvage_file(path, f->data, sz, &bad);
+        if (r < 0) {                                        /* nem abriu: nao entra na copia */
+            free(pk.f[pk.n - 1].data);
+            pk.f[pk.n - 1].data = NULL;
+            pk.total -= sz;
+            pk.n--;
+            nFail++;
+        } else if (r == 1) { nPart++; lost += bad; }
+        else               nOk++;
+    }
+    ui.busy = 0;
+    if (pk.n == 0) { pk_free(); info("RECUPERAR SAVE", "Nao foi possivel ler nenhum arquivo deste save"); return; }
+    pk.ps1 = isPs1;
+
+    /* 2) copia segura no USB (Pasta): ROOT/<SAVE>/<data>_RECUP */
+    get_now(&now);
+    if (now.y) snprintf(stamp, sizeof(stamp), "%04d-%02d-%02d_%02d-%02d-%02d_RECUP", now.y, now.mo, now.d, now.h, now.mi, now.s);
+    else       snprintf(stamp, sizeof(stamp), "0000-00-00_00-00-00_RECUP");
+    memset(&tmp, 0, sizeof(tmp));
+    snprintf(tmp.name, sizeof(tmp.name), "%s", old);
+    snprintf(tmp.stamp, sizeof(tmp.stamp), "%s", stamp);
+    mkdir(ROOT_DIR, 0777);
+    snprintf(d1, sizeof(d1), ROOT_DIR "/%s", old);
+    mkdir(d1, 0777);
+    rc = write_folder(&tmp, d1);
+    if (rc) { pk_free(); info("RECUPERAR SAVE", "Falha ao gravar a copia segura no USB; nada foi alterado"); return; }
+
+    /* 3) relatorio */
+    snprintf(ui.extra[0], sizeof(ui.extra[0]), "Arquivos: %d completos, %d parciais, %d ilegiveis", nOk, nPart, nFail);
+    if (lost) snprintf(ui.extra[1], sizeof(ui.extra[1]), "Dados que nao puderam ser lidos: %u KB (viraram zeros)", (lost + 1023) >> 10);
+    else      snprintf(ui.extra[1], sizeof(ui.extra[1]), "Nenhum erro de leitura nos arquivos que abriram");
+    snprintf(ui.extra[2], sizeof(ui.extra[2]), hasIcon ? "Copia segura em SaveManagerReis (pasta _RECUP)" : "Aviso: este save nao tem icon.sys");
+    ui.extraCol[0] = C_TXT;
+    ui.extraCol[1] = lost ? C_RED : C_GREEN;
+    ui.extraCol[2] = hasIcon ? C_MUTED : C_RED;
+    ui.extraN = 3;
+    info("LEITURA CONCLUIDA", old);
+    ui.extraN = 0;
+
+    if (nPart == 0 && nFail == 0) {
+        pk_free();
+        info("SAVE INTEGRO", "O cartao leu tudo sem erro. Se o jogo ainda reclama, o dado esta ruim.");
+        return;
+    }
+
+    /* 4) opcional: reescreve o save no cartao a partir do que foi lido (estrutura nova e limpa) */
+    if (confirm("REESCREVER NO CARTAO", "Apagar o save e gravar a copia recuperada? A copia segura fica no USB.")) {
+        int fails = 0;
+        fails += mc_delete_save(old);
+        memset(&tmp, 0, sizeof(tmp));
+        snprintf(tmp.name, sizeof(tmp.name), "%s", old);
+        fails += pk_to_mc(&tmp);                            /* grava e libera o pacote */
+        if (isPs1 && ps1_flag(mcSlot, old)) fails++;
+        refresh_mc();
+        if (fails) toast("Reescrito com %d falha(s); a copia segura esta no USB", fails);
+        else       toast_s("Save reescrito a partir da copia recuperada", 0);
+    }
+    pk_free();
+}
+
 static void do_mc_tools(void)
 {
     char soundLabel[24];
-    const char *items[14] = {
+    const char *items[16] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -3954,6 +4170,8 @@ static void do_mc_tools(void)
         "Formatar Memory Card",
         "Organizar / filtrar / buscar  (L3)",
         "Detalhes do save  (R3)",
+        "Renomear save / backup",
+        "Recuperar save selecionado (corrompido)",
         "Criar cartao virtual novo (VMC)",
         NULL,
         "Acertar data e hora",
@@ -3962,20 +4180,22 @@ static void do_mc_tools(void)
     };
     int c;
     snprintf(soundLabel, sizeof(soundLabel), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
-    items[10] = soundLabel;
-    c = menu_run("FERRAMENTAS", items, 14);
+    items[12] = soundLabel;
+    c = menu_run("FERRAMENTAS", items, 16);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) { tool_view(); return; }
     if (c == 8) { show_details(tab); return; }
-    if (c == 9) { tool_new_vmc(); return; }
-    if (c == 10) {
+    if (c == 11) { tool_new_vmc(); return; }
+    if (c == 10) { tool_recover_save(); return; }
+    if (c == 9) { tool_rename(); return; }
+    if (c == 12) {
         snd_set(!snd_enabled());
         snd_play(SND_OK);
         toast(snd_enabled() ? "Som ligado%.0d" : "Som desligado%.0d", 0);
         return;
     }
-    if (c == 11) { tool_clock(); return; }
-    if (c == 12) {
+    if (c == 13) { tool_clock(); return; }
+    if (c == 14) {
         snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
         snprintf(ui.extra[1], sizeof(ui.extra[1]), "Criado por Diego Reis");
         ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
@@ -3984,7 +4204,7 @@ static void do_mc_tools(void)
         ui.extraN = 0;
         return;
     }
-    if (c == 13) {
+    if (c == 15) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) { config_flush(); quitReq = 1; }
         return;
     }

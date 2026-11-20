@@ -21,6 +21,8 @@ Gerenciador de saves com interface estilo dashboard.
 - **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
 - **Cartões virtuais (VMC do OPL):** os saves de dentro dos arquivos `.bin` / `.ps2` / `.vmc` em `mass:/VMC/` aparecem na aba USB com a etiqueta **VMC**. Dá para importar para o Memory Card real e converter para Pasta, PSU ou MAX.
 - **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa), entram no backup e **podem ser restaurados** (a marca de save de PS1 é recriada; veja a seção abaixo).
+- **Renomear** (START → Renomear save / backup): no Memory Card renomeia a pasta do save; na aba USB renomeia o backup (mantenha a data no começo do nome para ela continuar aparecendo).
+- **Recuperar save selecionado** (START): tenta ler o save com várias tentativas, grava uma cópia segura no USB e, se houve erro de leitura, oferece reescrever o save no cartão.
 - **Cancelar operações longas:** em exportar, importar, converter, copiar entre cartões, verificar e criar VMC, **segure O**. O app termina o save em andamento e para (nada fica pela metade).
 - **Criar cartão virtual novo (VMC)** de 8, 16 ou 32 MB, direto em `mass:/VMC/`.
 - **Configurações salvas** em `mass:/SaveManagerReis/config.ini`: som, ordem da lista, formatos de exportação e conversão, slot e aba.
@@ -118,6 +120,23 @@ Limites desta versão: só **leitura** (não grava saves dentro do VMC), só a p
 Saves de PS1 gravados num Memory Card de PS2 aparecem com a etiqueta **PS1**, entram no filtro de região (**PS1**) e são exportados e importados como os demais (Pasta ou PSU; em Pasta o app grava um arquivo marcador `SMR_PS1.FLG` junto do backup, e em PSU a marca fica no cabeçalho da pasta). O formato MAX não guarda essa marca.
 
 Ao **importar ou copiar entre cartões**, o app recria a marca de "save de PS1" da pasta (atributo `0x9027`) com `mcSetFileInfo`, o mesmo método do uLaunchELF. **Esse passo ainda não foi testado num console real**: faça o primeiro teste com um save de PS1 que você possa perder e confira no navegador do PS2 se ele aparece como save de PS1. A verificação de saves ignora os de PS1, pois não têm `icon.sys`.
+
+## Renomear
+
+**Memory Card:** troca o nome da pasta do save (até 31 caracteres). **Atenção:** o jogo procura o save pelo nome da pasta (por exemplo `BASLUS-20552GTA3`); com outro nome ele provavelmente não vai achar o save. O app avisa antes de renomear e confere depois se o cartão aceitou.
+
+**USB:** troca o nome do arquivo ou pasta do backup, sem mexer no save de dentro. Os backups criados pelo app começam com a data (`2026-11-16_21-18-05`); deixe a data no começo e acrescente o que quiser depois (`_GTA100`) e a data continua aparecendo no card. Cartões virtuais (VMC) não são renomeados por aqui.
+
+## Recuperar save selecionado
+
+Na aba Memory Card, selecione o save e use START → **Recuperar save selecionado (corrompido)**:
+
+1. Lê cada arquivo do save; se der erro, tenta de novo (3 vezes) e depois por pedaços de 1 KB (3 tentativas por pedaço). O que realmente não der para ler vira zeros.
+2. Grava uma **cópia segura** no USB, em `SaveManagerReis/<SAVE>/<data>_RECUP`, antes de mexer em qualquer coisa.
+3. Mostra o relatório: arquivos completos, parciais e ilegíveis, quanto foi perdido e se falta o `icon.sys`.
+4. Se houve erro de leitura, pergunta se deve **apagar o save e gravar de novo** a partir do que foi recuperado, o que cria uma estrutura nova e limpa no cartão.
+
+Limites: ele recupera o que o cartão ainda consegue ler e corrige a estrutura do save. Ele **não conserta o conteúdo** dos arquivos: se o jogo diz que o save está corrompido mas o cartão leu tudo sem erro, o problema está nos dados do próprio jogo (o app avisa nesse caso e não reescreve nada). Precisa de pendrive conectado, por causa da cópia segura.
 
 ## Filtro e busca
 
