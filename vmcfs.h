@@ -39,4 +39,11 @@ int   vmc_list_dir(Vmc *v, const VmcEnt *dir, vmc_ent_fn fn, void *ctx);
 int   vmc_find_root(Vmc *v, const char *name, VmcEnt *out);/* 0 = achou */
 long  vmc_read_file(Vmc *v, const VmcEnt *f, uint8_t *dst, uint32_t cap);   /* bytes lidos ou -1 */
 
+/* cria um cartao virtual novo (formatado, sem ECC, paginas de 512 bytes), como o OPL espera.
+ * size_mb: 8, 16, 32 ou 64. now: data/hora de Toquio no formato do PS2 (8 bytes).
+ * prog (opcional) e chamada a cada ~64 KB; retornar != 0 cancela.
+ * Retorna 0 = ok, 1 = cancelado, <0 = erro. Em erro ou cancelamento o arquivo parcial e apagado. */
+typedef int (*vmc_prog_fn)(void *ctx, uint32_t done, uint32_t total);
+int vmc_format(const char *path, uint32_t size_mb, const uint8_t now[8], vmc_prog_fn prog, void *ctx);
+
 #endif

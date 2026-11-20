@@ -120,7 +120,7 @@ typedef struct {
     int    toastT;
     int    toastErr;
     int    menu, mn, msel;          /* menu de opcoes (modal com lista) */
-    const char *mitem[12];
+    const char *mitem[16];
     int    extraN;                  /* linhas extras no modal de confirmacao (0..3) */
     char   extra[3][96];
     u64    extraCol[3];
@@ -137,6 +137,10 @@ static int   tab = TAB_MC, mcSlot = 0, mcReady = 0, usbOk = 0, mcFreeKB = 0;
 /* Memory Cards: sem multitap sao 2 (porta 1 e 2); com multitap cada porta tem 4 slots (1A..1D, 2A..2D).
  * mcSlot e o INDICE nesta lista (0..nCards-1). */
 static int   cardPort[8] = { 0, 1 }, cardSlot[8] = { 0, 0 }, cardTap[8], nCards = 2;
+/* cancelar operacoes longas: segure O (checado entre um save e outro) */
+static int g_cancel = 0, g_multi = 0;
+static int cancel_poll(void);
+
 #define MP(i) cardPort[i]
 #define MS(i) cardSlot[i]
 
@@ -255,7 +259,7 @@ static int clkEditing = 0, clkSel = 0, clkEd[5];     /* editor: dia, mes, ano, h
 static int  inEditing = 0, inLen = 0, inCh = 0;
 static char inBuf[24];
 static const char *inTitle = "";
-static const char IN_CS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.";
+static const char IN_CS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
 /* tela de detalhes do save */
 typedef struct { char name[36]; u32 size; } DFile;
 static DFile dtF[96];
@@ -711,7 +715,8 @@ static void render(void)
 
     /* ---- janela de progresso / confirmacao ---- */
     if (ui.menu) {
-        float mw = 500, mh = 70 + ui.mn * 26, mx = (W - mw) / 2, my = (H - mh) / 2 - 10;
+        float rh = ui.mn > 11 ? 23.0f : 26.0f;
+        float mw = 500, mh = 66 + ui.mn * rh, mx = (W - mw) / 2, my = (H - mh) / 2 - 10;
         int k;
         rect(0, 0, W, H, C_DIM);
         rect(mx + 4, my + 5, mw, mh, C_SHADOW);
@@ -719,9 +724,9 @@ static void render(void)
         hgrad(mx, my, mw, 4, C_ACC, C_ACC2);
         ctext(W / 2, my + 14, 0.65f, C_TXT, ui.title);
         for (k = 0; k < ui.mn; k++) {
-            float iy = my + 46 + k * 26;
-            if (k == ui.msel) { hgrad(mx + 14, iy, mw - 28, 22, C_ACC, C_ACC2); text(mx + 24, iy + 4, 0.48f, C_DARK, ui.mitem[k]); }
-            else              { rect(mx + 14, iy, mw - 28, 22, C_CARD);         text(mx + 24, iy + 4, 0.48f, C_TXT, ui.mitem[k]); }
+            float iy = my + 44 + k * rh;
+            if (k == ui.msel) { hgrad(mx + 14, iy, mw - 28, rh - 4, C_ACC, C_ACC2); text(mx + 24, iy + (rh - 4 - 14) / 2, 0.48f, C_DARK, ui.mitem[k]); }
+            else              { rect(mx + 14, iy, mw - 28, rh - 4, C_CARD);         text(mx + 24, iy + (rh - 4 - 14) / 2, 0.48f, C_TXT, ui.mitem[k]); }
         }
         text(mx + 14, my + mh - 18, 0.38f, C_MUTED, "X escolher    O voltar");
     } else if (inEditing) {
@@ -809,6 +814,7 @@ static void render(void)
             if (pct > 1.0f) pct = 1.0f;
             rect(bx + 30, by + 92, 380, 16, C_CARD);
             hgrad(bx + 30, by + 92, 380 * pct, 16, C_ACC, C_ACC2);
+            if (g_multi) ctext(W / 2, by + 112, 0.38f, C_MUTED, "Segure O para cancelar");
         } else if (ui.modal == 2) {
             key_btn(W / 2 - 30, yb, 0, C_BLUE, "OK");
         } else {
@@ -828,6 +834,7 @@ static void present(void)
 
 static void progress(const char *msg, u32 done, u32 total)
 {
+    cancel_poll();
     ui.done = done; ui.total = total;
     snprintf(ui.msg, sizeof(ui.msg), "%s", msg);
     render();
@@ -873,6 +880,15 @@ static void read_pad(void)
     }
 }
 
+/* le o controle e marca o cancelamento se o O estiver apertado */
+static int cancel_poll(void)
+{
+    if (g_cancel) return 1;
+    read_pad();
+    if (pad_old & PAD_CIRCLE) g_cancel = 1;
+    return g_cancel;
+}
+
 static int confirm(const char *title, const char *msg)
 {
     int res = -1;
@@ -911,7 +927,7 @@ static int menu_run(const char *title, const char **items, int n)
 {
     int res = -2, k;
     snprintf(ui.title, sizeof(ui.title), "%s", title);
-    for (k = 0; k < n && k < 12; k++) ui.mitem[k] = items[k];
+    for (k = 0; k < n && k < 16; k++) ui.mitem[k] = items[k];
     ui.mn = n; ui.msel = 0; ui.menu = 1;
     while (res == -2) {
         read_pad();
@@ -1198,7 +1214,7 @@ static void add_pack_file(const char *path, const char *fname, int kind)
     }
 }
 
-/* ---------------- cartoes virtuais (VMC do OPL: mass:/VMC/*.bin) ---------------- */
+/* ---------------- cartoes virtuais (VMC do OPL, pasta mass:/VMC) ---------------- */
 #define VMC_DIR "mass:/VMC"
 
 typedef struct { Vmc *v; char stamp[24]; char path[128]; } VScan;
@@ -1807,17 +1823,20 @@ static void sync_back(Entry *full, int fn, const Entry *view, int vn)
 static void load_all_titles(void)
 {
     int i, d = 0, tot = mcFullN + usbFullN;
+    g_cancel = 0; g_multi = 1;
     ui.busy = 1;
     snprintf(ui.title, sizeof(ui.title), "LENDO NOMES DOS JOGOS");
     for (i = 0; i < mcFullN; i++) {
+        if (cancel_poll()) break;
         if (!mcFull[i].titleDone) { mcFull[i].titleDone = 1; title_load(0, &mcFull[i]); }
         if ((++d & 3) == 0) progress("Memory Card", (u32)d, (u32)(tot ? tot : 1));
     }
     for (i = 0; i < usbFullN; i++) {
+        if (cancel_poll()) break;
         if (!usbFull[i].titleDone) { usbFull[i].titleDone = 1; title_load(1, &usbFull[i]); }
         if ((++d & 3) == 0) progress("USB", (u32)d, (u32)(tot ? tot : 1));
     }
-    ui.busy = 0;
+    ui.busy = 0; g_multi = 0;
 }
 
 static void view_apply_all(void)
@@ -2191,6 +2210,23 @@ static int fd_to_mc(int in, u32 size, const char *dst, const char *label)
 }
 
 /* memoria -> Memory Card. -2 = nao abriu */
+/* marca a pasta como "save de PS1" no cartao (atributo 0x9027), como faz o uLaunchELF ao restaurar.
+ * Mantem as datas e o resto da entrada: le a entrada atual e so troca o atributo. 0 = ok */
+static int ps1_flag(int card, const char *name)
+{
+    static sceMcTblGetDir tbl __attribute__((aligned(64)));
+    char path[64];
+    int r = 0, n;
+    snprintf(path, sizeof(path), "/%s", name);
+    memset(&tbl, 0, sizeof(tbl));
+    n = mc_list(card, path, &tbl, 1);
+    if (n < 1) return 1;
+    tbl.AttrFile = 0x9027;
+    mcSetFileInfo(MP(card), MS(card), path, &tbl, 0xFEED);       /* 0xFEED: valor usado pelo uLaunchELF */
+    mcSync(0, NULL, &r);
+    return r < 0 ? 1 : 0;
+}
+
 static int mem_to_mc(const u8 *src, u32 size, const char *dst, const char *label)
 {
     int fd = -1, w = 0, r, err = 0;
@@ -2255,7 +2291,7 @@ static int export_psu(const Entry *e, const char *stamp)
     fd = open(outp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0) return 1;
 
-    psu_hdr(hdr, e->ps1 ? 0x9427 : 0x8427, (u32)nf + 2, cr, mo, e->name);  if (wr_all(fd, hdr, 512)) ok = 0;
+    psu_hdr(hdr, e->ps1 ? 0x9027 : 0x8427, (u32)nf + 2, cr, mo, e->name);  if (wr_all(fd, hdr, 512)) ok = 0;
     psu_hdr(hdr, 0x8427, 0, cr, mo, ".");                if (wr_all(fd, hdr, 512)) ok = 0;
     psu_hdr(hdr, 0x8427, 0, cr, mo, "..");               if (wr_all(fd, hdr, 512)) ok = 0;
 
@@ -2848,7 +2884,7 @@ static int write_psu(const Entry *e, const char *d1)
     snprintf(outp, sizeof(outp), "%s/%s.psu", d1, e->stamp);
     fd = open(outp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0) return 1;
-    psu_hdr(hdr, pk.ps1 ? 0x9427 : 0x8427, (u32)pk.n + 2, pk.f[0].cr, pk.f[0].mo, e->name); if (wr_all(fd, hdr, 512)) ok = 0;
+    psu_hdr(hdr, pk.ps1 ? 0x9027 : 0x8427, (u32)pk.n + 2, pk.f[0].cr, pk.f[0].mo, e->name); if (wr_all(fd, hdr, 512)) ok = 0;
     psu_hdr(hdr, 0x8427, 0, pk.f[0].cr, pk.f[0].mo, ".");                 if (wr_all(fd, hdr, 512)) ok = 0;
     psu_hdr(hdr, 0x8427, 0, pk.f[0].cr, pk.f[0].mo, "..");                if (wr_all(fd, hdr, 512)) ok = 0;
     for (i = 0; i < pk.n && ok; i++) {
@@ -2974,6 +3010,7 @@ static int mc_verify(void)
     badN = 0;
     for (i = 0; i < mcFullN; i++) {
         int hasIcon = 0, nf = 0, ok = 1;
+        if (cancel_poll()) break;
         if (mcFull[i].ps1) continue;                 /* saves de PS1 nao tem icon.sys */
         progress(mcFull[i].name, (u32)i, (u32)(mcFullN ? mcFullN : 1));
         snprintf(pat, sizeof(pat), "/%s/*", mcFull[i].name);
@@ -3157,11 +3194,14 @@ static int export_one(const Entry *e, const char *stamp)
 
 static int import_one(const Entry *e)
 {
-    if (e->kind == FMT_PSU) return import_psu(e);
-    if (e->kind == FMT_MAX) return import_max(e);
-    if (e->kind == FMT_VMC) return import_vmc(e);
-    if (e->kind >= FMT_CBS) return import_sv(e);
-    return import_folder(e);
+    int r;
+    if (e->kind == FMT_PSU)      r = import_psu(e);
+    else if (e->kind == FMT_MAX) r = import_max(e);
+    else if (e->kind == FMT_VMC) r = import_vmc(e);
+    else if (e->kind >= FMT_CBS) r = import_sv(e);
+    else                         r = import_folder(e);
+    if (e->ps1 && r == 0 && ps1_flag(mcSlot, e->name)) r++;      /* recria a marca de save de PS1 */
+    return r;
 }
 
 /* ============================================================
@@ -3177,9 +3217,9 @@ static int gather(Entry *L, int N, int *idx)
 
 static void do_export(void)
 {
-    int idx[MAX_ENT], k, i, fails = 0;
+    int idx[MAX_ENT], k, i, fails = 0, nDone = 0;
     Now n;
-    char stamp[32];
+    char stamp[32], m[96];
 
     if (!mcReady) { toast("Memory Card nao encontrado%.0d", 0); return; }
     if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB%.0d", 0); return; }
@@ -3196,14 +3236,23 @@ static void do_export(void)
     if (g_total == 0) g_total = 1;
 
     snprintf(ui.title, sizeof(ui.title), "EXPORTANDO (%s)", FMT_NAME[expFmt]);
+    g_cancel = 0; g_multi = (k > 1);
     ui.busy = 1;
-    for (i = 0; i < k; i++) fails += export_one(&mcList[idx[i]], stamp);
-    ui.busy = 0;
+    for (i = 0; i < k; i++) {
+        if (cancel_poll()) break;
+        fails += export_one(&mcList[idx[i]], stamp);
+        nDone++;
+    }
+    ui.busy = 0; g_multi = 0;
 
     for (i = 0; i < mcCount; i++) mcList[i].sel = 0;
     refresh_usb();
-    if (fails) toast("Concluido com %d falha(s)", fails);
-    else       toast("%d save(s) exportado(s) com sucesso", k);
+    if (nDone < k) {
+        snprintf(m, sizeof(m), "Cancelado: %d de %d save(s) exportado(s)", nDone, k);
+        toast_s(m, 0);
+    }
+    else if (fails) toast("Concluido com %d falha(s)", fails);
+    else            toast("%d save(s) exportado(s) com sucesso", k);
 }
 
 static int mc_has(const char *name)
@@ -3249,7 +3298,7 @@ static void fill_compare(const Entry *b, const Entry *c)
 
 static void do_import(void)
 {
-    int idx[MAX_ENT], k, i, fails = 0, nSkip = 0;
+    int idx[MAX_ENT], k, i, fails = 0, nDone = 0, nTodo = 0;
     u32 need = 0;
 
     refresh_mc();
@@ -3257,15 +3306,7 @@ static void do_import(void)
     k = gather(usbList, usbCount, idx);
     if (k == 0) return;
 
-    {
-        int nps1 = 0;                               /* saves de PS1: so backup (o app ainda nao os restaura) */
-        for (i = 0; i < k; i++) if (usbList[idx[i]].ps1) { usbList[idx[i]].sel = -1; nps1++; }
-        if (nps1) info("SAVE DE PS1", "Saves de PS1 nao sao restaurados ainda (so backup)");
-        if (nps1 == k) { for (i = 0; i < usbCount; i++) usbList[i].sel = 0; return; }
-        nSkip = nps1;
-    }
-
-    for (i = 0; i < k; i++) if (usbList[idx[i]].sel != -1) need += usbList[idx[i]].size + 2048;
+    for (i = 0; i < k; i++) need += usbList[idx[i]].size + 2048;
     if ((need >> 10) > (u32)mcFreeKB) {
         /* pode ser sobrescrita; so avisa quando claramente nao cabe */
         int allExist = 1;
@@ -3295,14 +3336,26 @@ static void do_import(void)
     snprintf(ui.title, sizeof(ui.title), "IMPORTANDO PARA MEMORY CARD");
     if (k == 1 && usbList[idx[0]].kind != FMT_DIR)
         snprintf(ui.title, sizeof(ui.title), "IMPORTANDO %s", FMT_NAME[usbList[idx[0]].kind]);
+    for (i = 0; i < k; i++) if (usbList[idx[i]].sel != -1) nTodo++;
+    g_cancel = 0; g_multi = (nTodo > 1);
     ui.busy = 1;
-    for (i = 0; i < k; i++) if (usbList[idx[i]].sel != -1) fails += import_one(&usbList[idx[i]]);
-    ui.busy = 0;
+    for (i = 0; i < k; i++) {
+        if (usbList[idx[i]].sel == -1) continue;
+        if (cancel_poll()) break;
+        fails += import_one(&usbList[idx[i]]);
+        nDone++;
+    }
+    ui.busy = 0; g_multi = 0;
 
     for (i = 0; i < usbCount; i++) usbList[i].sel = 0;
     refresh_mc();
-    if (fails) toast("Concluido com %d falha(s)", fails);
-    else       toast("%d save(s) importado(s) com sucesso", k - nSkip);
+    if (nDone < nTodo) {
+        char m[96];
+        snprintf(m, sizeof(m), "Cancelado: %d de %d save(s) importado(s)", nDone, nTodo);
+        toast_s(m, 0);
+    }
+    else if (fails) toast("Concluido com %d falha(s)", fails);
+    else            toast("%d save(s) importado(s) com sucesso", nDone);
 }
 
 __attribute__((unused)) static void do_convert(void)
@@ -3330,7 +3383,8 @@ __attribute__((unused)) static void do_convert(void)
 
 static void do_convert_tab(void)
 {
-    int idx[MAX_ENT], k, i, n = 0, fails = 0;
+    int idx[MAX_ENT], k, i, n = 0, fails = 0, todo = 0;
+    char m[96];
     if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB%.0d", 0); return; }
     k = gather(usbList, usbCount, idx);
     g_done = 0; g_total = 0;
@@ -3338,18 +3392,25 @@ static void do_convert_tab(void)
         if (usbList[idx[i]].kind != convFmt) g_total += usbList[idx[i]].size * 2;
     if (g_total == 0) { toast("Nada a converter: ja esta nesse formato%.0d", 0); return; }
     snprintf(ui.title, sizeof(ui.title), "CONVERTENDO PARA %s", FMT_NAME[convFmt]);
+    for (i = 0; i < k; i++) if (usbList[idx[i]].kind != convFmt) todo++;
+    g_cancel = 0; g_multi = (todo > 1);
     ui.busy = 1;
     for (i = 0; i < k; i++) {
         Entry *e = &usbList[idx[i]];
         if (e->kind == convFmt) continue;
+        if (cancel_poll()) break;
         fails += convert_entry(e, convFmt);
         n++;
     }
-    ui.busy = 0;
+    ui.busy = 0; g_multi = 0;
     for (i = 0; i < usbCount; i++) usbList[i].sel = 0;
     refresh_usb();
-    if (fails) toast("Concluido com %d falha(s)", fails);
-    else       toast("%d save(s) convertido(s)", n);
+    if (n < todo) {
+        snprintf(m, sizeof(m), "Cancelado: %d de %d save(s) convertido(s)", n, todo);
+        toast_s(m, 0);
+    }
+    else if (fails) toast("Concluido com %d falha(s)", fails);
+    else            toast("%d save(s) convertido(s)", n);
 }
 
 /* ---- Ferramentas do Memory Card (interface) ---- */
@@ -3402,9 +3463,11 @@ static void tool_verify(void)
     char m[96];
     if (!mcReady || mcCount == 0) { toast("Nenhum save para verificar%.0d", 0); return; }
     snprintf(ui.title, sizeof(ui.title), "VERIFICANDO SAVES");
+    g_cancel = 0; g_multi = 1;
     ui.busy = 1;
     bad = mc_verify();
-    ui.busy = 0;
+    ui.busy = 0; g_multi = 0;
+    if (g_cancel) { toast_s("Verificacao cancelada", 0); return; }
     if (bad == 0) {
         snprintf(m, sizeof(m), "%d save(s) verificado(s): nenhum problema", mcCount);
         info("VERIFICACAO CONCLUIDA", m);
@@ -3484,13 +3547,6 @@ static void tool_copy(void)
     if (nCards < 2) { toast("Falha: so ha um slot de Memory Card%.0d", 0); return; }
     k = gather(mcList, mcCount, idx);
     if (k == 0) return;
-    {
-        int j = 0, np = 0;                          /* saves de PS1 nao sao copiados (o app ainda nao os restaura) */
-        for (i = 0; i < k; i++) { if (mcList[idx[i]].ps1) np++; else idx[j++] = idx[i]; }
-        k = j;
-        if (np) info("SAVE DE PS1", "Saves de PS1 nao sao copiados entre cartoes ainda");
-        if (k == 0) return;
-    }
 
     if (nCards > 2) {                              /* multitap: escolhe o slot de destino */
         static char lbl[8][24];
@@ -3529,11 +3585,13 @@ static void tool_copy(void)
     for (i = 0; i < k; i++) g_total += mcList[idx[i]].size;
     if (g_total == 0) g_total = 1;
     snprintf(ui.title, sizeof(ui.title), "COPIANDO SLOT %s PARA SLOT %s", ns, nd);
+    g_cancel = 0; g_multi = (k > 1);
     for (i = 0; i < k; i++) {
         Entry *e = &mcList[idx[i]];
         char pat[64];
         sceMcTblGetDir one[2];
         int exists;
+        if (cancel_poll()) break;
         snprintf(pat, sizeof(pat), "/%s", e->name);
         exists = mc_list(dst, pat, one, 2) > 0;
         if (exists) {
@@ -3542,11 +3600,17 @@ static void tool_copy(void)
         }
         ui.busy = 1;
         fails += mc_copy_save(e->name, mcSlot, dst, e->name);
+        if (e->ps1 && ps1_flag(dst, e->name)) fails++;      /* recria a marca de save de PS1 no destino */
         ui.busy = 0;
         copied++;
     }
+    g_multi = 0;
     for (i = 0; i < mcCount; i++) mcList[i].sel = 0;
-    if (fails)       toast("Concluido com %d falha(s)", fails);
+    if (g_cancel && copied < k) {
+        snprintf(m, sizeof(m), "Cancelado: %d de %d save(s) copiado(s)", copied, k);
+        toast_s(m, 0);
+    }
+    else if (fails)  toast("Concluido com %d falha(s)", fails);
     else if (copied) toast("%d save(s) copiado(s) para o outro cartao", copied);
     else             toast("Nada copiado%.0d", 0);
 }
@@ -3739,10 +3803,148 @@ static void tool_clock(void)
     }
 }
 
+/* ---------------- criar cartao virtual novo (VMC do OPL) ---------------- */
+static int vmc_prog_cb(void *ctx, uint32_t done, uint32_t total)
+{
+    (void)ctx;
+    progress("Gravando o cartao virtual...", done >> 10, total >> 10);
+    return cancel_poll();                          /* segure O para cancelar */
+}
+
+static void tool_new_vmc(void)
+{
+    static const int SZ[3] = { 8, 16, 32 };
+    const char *it[4] = { "8 MB  (padrao do OPL)", "16 MB", "32 MB", "Cancelar" };
+    char name[24], path[96], m[96];
+    struct stat st;
+    Now n;
+    u8 now[8];
+    int c, mb, r;
+
+    if (!usb_ready()) { usbOk = 0; toast("Conecte um pendrive/HD USB%.0d", 0); return; }
+    c = menu_run("TAMANHO DO CARTAO VIRTUAL", it, 4);
+    if (c < 0 || c > 2) return;
+    mb = SZ[c];
+    snprintf(name, sizeof(name), "NOVO_VMC");
+    if (!text_input("NOME DO VMC (sem .bin)", name, sizeof(name)) || !name[0] || name[0] == '.') return;
+    mkdir(VMC_DIR, 0777);
+    snprintf(path, sizeof(path), VMC_DIR "/%s.bin", name);
+    if (stat(path, &st) == 0) { toast("Falha: ja existe um VMC com esse nome%.0d", 0); return; }
+    snprintf(m, sizeof(m), "Criar %s.bin com %d MB em mass:/VMC?", name, mb);
+    if (!confirm("CRIAR CARTAO VIRTUAL", m)) return;
+
+    memset(&n, 0, sizeof(n));
+    get_now(&n);
+    if (!n.y) { n.y = 2000; n.mo = 1; n.d = 1; }          /* relogio ilegivel */
+    local_to_jst(&n);                                      /* o cartao guarda a hora de Toquio */
+    now[0] = 0; now[1] = (u8)n.s; now[2] = (u8)n.mi; now[3] = (u8)n.h;
+    now[4] = (u8)n.d; now[5] = (u8)n.mo; now[6] = (u8)(n.y & 0xFF); now[7] = (u8)(n.y >> 8);
+
+    g_cancel = 0; g_multi = 1;
+    snprintf(ui.title, sizeof(ui.title), "CRIANDO VMC DE %d MB", mb);
+    ui.busy = 1;
+    r = vmc_format(path, (uint32_t)mb, now, vmc_prog_cb, NULL);
+    ui.busy = 0; g_multi = 0;
+    if (r == 0) {
+        refresh_usb();
+        snprintf(m, sizeof(m), "VMC criado: %s.bin (%d MB)", name, mb);
+        toast_s(m, 0);
+    } else if (r == 1) {
+        toast_s("Criacao cancelada (arquivo removido)", 0);
+    } else {
+        toast_s("Falha ao criar o VMC (sem espaco no USB?)", 1);
+    }
+}
+
+/* ---------------- configuracoes (mass:/SaveManagerReis/config.ini) ---------------- */
+#define CFG_PATH ROOT_DIR "/config.ini"
+#define CFG_N 6
+static int cfgSaved[CFG_N], cfgSeen[CFG_N], cfgStable = 0, cfgLoaded = 0;
+
+static void cfg_cur(int *v)
+{
+    v[0] = snd_enabled(); v[1] = sortMode; v[2] = expFmt; v[3] = convFmt; v[4] = mcSlot; v[5] = tab;
+}
+
+static void config_save(void)
+{
+    char b[200];
+    int v[CFG_N], fd, n;
+    cfg_cur(v);
+    memcpy(cfgSaved, v, sizeof(v));                          /* mesmo se falhar: nao tenta de novo sem mudanca */
+    if (!usbOk) return;
+    mkdir(ROOT_DIR, 0777);
+    fd = open(CFG_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) return;
+    n = snprintf(b, sizeof(b),
+                 "; Save Manager Reis - configuracoes (gravado automaticamente)\n"
+                 "sound=%d\nsort=%d\nexport_format=%d\nconvert_format=%d\nslot=%d\ntab=%d\n",
+                 v[0], v[1], v[2], v[3], v[4], v[5]);
+    if (n > 0) write(fd, b, (size_t)n);
+    close(fd);
+}
+
+/* le o config.ini e aplica. rebuild = 1 se ja ha listas na tela (reconstroi a vista) */
+static void config_load_apply(int rebuild)
+{
+    char b[512], *p;
+    int fd, n, oldSlot = mcSlot, oldSort = sortMode;
+    if (!usb_ready()) return;
+    cfgLoaded = 1;
+    fd = open(CFG_PATH, O_RDONLY);
+    if (fd >= 0) {
+        n = read(fd, b, sizeof(b) - 1);
+        close(fd);
+        if (n > 0) {
+            b[n] = 0;
+            for (p = b; *p; ) {
+                char key[32];
+                int val;
+                if (sscanf(p, "%31[a-z_]=%d", key, &val) == 2) {
+                    if      (!strcmp(key, "sound"))          snd_set(val != 0);
+                    else if (!strcmp(key, "sort")           && val >= 0 && val <= 3)       sortMode = val;
+                    else if (!strcmp(key, "export_format")  && val >= FMT_DIR && val <= FMT_MAX) expFmt = val;
+                    else if (!strcmp(key, "convert_format") && val >= FMT_DIR && val <= FMT_MAX) convFmt = val;
+                    else if (!strcmp(key, "slot")           && val >= 0 && val < nCards)   mcSlot = val;
+                    else if (!strcmp(key, "tab")            && val >= 0 && val <= 2)       tab = val;
+                }
+                while (*p && *p != '\n') p++;
+                if (*p) p++;
+            }
+        }
+    }
+    cfg_cur(cfgSaved);
+    memcpy(cfgSeen, cfgSaved, sizeof(cfgSaved));
+    cfgStable = 0;
+    if (rebuild) {
+        if (sortMode != oldSort) view_apply_all();
+        if (mcSlot != oldSlot) refresh_mc();
+    }
+}
+
+static void config_flush(void)                              /* grava ja, se algo mudou */
+{
+    int v[CFG_N];
+    if (!usbOk) return;
+    cfg_cur(v);
+    if (memcmp(v, cfgSaved, sizeof(v)) != 0) config_save();
+}
+
+/* chamada a cada quadro: grava 1,5 s depois da ultima mudanca (nao trava ao trocar de aba rapido) */
+static void config_poll(void)
+{
+    int v[CFG_N];
+    if (!usbOk) return;
+    if (!cfgLoaded) { config_load_apply(1); return; }       /* USB conectado depois da abertura */
+    cfg_cur(v);
+    if (memcmp(v, cfgSeen, sizeof(v)) != 0) { memcpy(cfgSeen, v, sizeof(v)); cfgStable = 0; return; }
+    if (memcmp(v, cfgSaved, sizeof(v)) != 0 && ++cfgStable >= 90) config_save();
+}
+
 static void do_mc_tools(void)
 {
     char soundLabel[24];
-    const char *items[13] = {
+    const char *items[14] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -3752,6 +3954,7 @@ static void do_mc_tools(void)
         "Formatar Memory Card",
         "Organizar / filtrar / buscar  (L3)",
         "Detalhes do save  (R3)",
+        "Criar cartao virtual novo (VMC)",
         NULL,
         "Acertar data e hora",
         "Creditos",
@@ -3759,19 +3962,20 @@ static void do_mc_tools(void)
     };
     int c;
     snprintf(soundLabel, sizeof(soundLabel), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
-    items[9] = soundLabel;
-    c = menu_run("FERRAMENTAS", items, 13);
+    items[10] = soundLabel;
+    c = menu_run("FERRAMENTAS", items, 14);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) { tool_view(); return; }
     if (c == 8) { show_details(tab); return; }
-    if (c == 9) {
+    if (c == 9) { tool_new_vmc(); return; }
+    if (c == 10) {
         snd_set(!snd_enabled());
         snd_play(SND_OK);
         toast(snd_enabled() ? "Som ligado%.0d" : "Som desligado%.0d", 0);
         return;
     }
-    if (c == 10) { tool_clock(); return; }
-    if (c == 11) {
+    if (c == 11) { tool_clock(); return; }
+    if (c == 12) {
         snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
         snprintf(ui.extra[1], sizeof(ui.extra[1]), "Criado por Diego Reis");
         ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
@@ -3780,8 +3984,8 @@ static void do_mc_tools(void)
         ui.extraN = 0;
         return;
     }
-    if (c == 12) {
-        if (confirm("SAIR", "Fechar o Save Manager Reis?")) quitReq = 1;
+    if (c == 13) {
+        if (confirm("SAIR", "Fechar o Save Manager Reis?")) { config_flush(); quitReq = 1; }
         return;
     }
     if (c == 0) tool_verify();
@@ -3916,12 +4120,15 @@ int main(int argc, char *argv[])
     }
     ui.busy = 0;
 
+    config_load_apply(0);                           /* le o config.ini do pendrive (se houver) */
     refresh_mc();
     refresh_usb();
     snd_play(SND_START);
 
     for (;;) {
         read_pad();
+
+        config_poll();
 
         if ((frameNo % 180) == 0) {              /* reavalia o multitap de tempos em tempos (detecta tardio) */
             int oldN = nCards;

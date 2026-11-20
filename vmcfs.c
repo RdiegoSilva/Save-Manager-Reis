@@ -207,3 +207,123 @@ long vmc_read_file(Vmc *v, const VmcEnt *f, uint8_t *dst, uint32_t cap)
     }
     return (long)done;
 }
+
+/* ---------------- criar cartao virtual novo ---------------- */
+static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
+static void put16(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
+
+static int wr_at(int fd, off_t off, const uint8_t *src, uint32_t n)
+{
+    uint32_t put = 0;
+    if (lseek(fd, off, SEEK_SET) != off) return -1;
+    while (put < n) {
+        int r = write(fd, src + put, n - put);
+        if (r <= 0) return -1;
+        put += (uint32_t)r;
+    }
+    return 0;
+}
+
+static void make_dirent(uint8_t *b, uint32_t mode, uint32_t length, const uint8_t now[8], const char *name)
+{
+    memset(b, 0, DIRENT);
+    put16(b, mode);
+    put32(b + 4, length);
+    memcpy(b + 8, now, 8);
+    memcpy(b + 24, now, 8);
+    strncpy((char *)b + 64, name, 31);
+}
+
+int vmc_format(const char *path, uint32_t size_mb, const uint8_t now[8], vmc_prog_fn prog, void *ctx)
+{
+    static uint8_t zero[65536];
+    uint8_t buf[CLUSTER];
+    uint32_t cpc, alloc_clusters, fat_clusters, ifc_n, first_fat, aoff, erase_blocks, gb1, gb2, aend;
+    uint32_t i, e, total, done = 0;
+    int fd, rc = -1;
+    const uint32_t first_ifc = 8;
+
+    if (size_mb != 8 && size_mb != 16 && size_mb != 32 && size_mb != 64) return -1;
+    cpc = size_mb * 1024;                                  /* clusters de 1 KB */
+    alloc_clusters = cpc - (first_ifc + 2);
+    fat_clusters = (alloc_clusters + EPC - 1) / EPC;
+    ifc_n = (fat_clusters + EPC - 1) / EPC;
+    if (ifc_n > 32) { ifc_n = 32; fat_clusters = ifc_n * EPC; }
+    first_fat = first_ifc + ifc_n;
+    aoff = first_fat + fat_clusters;
+    erase_blocks = (cpc * 2) / 16;                         /* blocos de apagamento de 16 paginas */
+    gb1 = erase_blocks - 1;
+    gb2 = erase_blocks - 2;
+    aend = gb2 * 8 - aoff;                                 /* 8 clusters por bloco */
+    if (aend < 1) return -1;
+
+    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) return -1;
+
+    /* 1) arquivo inteiro zerado (o sistema FAT nao zera area estendida: precisa gravar de verdade) */
+    total = size_mb * 1024 * 1024;
+    memset(zero, 0, sizeof(zero));
+    while (done < total) {
+        if (prog && prog(ctx, done, total)) { rc = 1; goto fail; }
+        if (write(fd, zero, sizeof(zero)) != (int)sizeof(zero)) goto fail;
+        done += sizeof(zero);
+    }
+
+    /* 2) superbloco (pagina 0) */
+    memset(buf, 0, sizeof(buf));
+    memcpy(buf, "Sony PS2 Memory Card Format ", 28);
+    memcpy(buf + 28, "1.2.0.0", 7);
+    put16(buf + 40, 512);                                  /* tamanho da pagina */
+    put16(buf + 42, 2);                                    /* paginas por cluster */
+    put16(buf + 44, 16);                                   /* paginas por bloco de apagamento */
+    put16(buf + 46, 0xFF00);
+    put32(buf + 48, cpc);
+    put32(buf + 52, aoff);
+    put32(buf + 56, aend);
+    put32(buf + 60, 0);                                    /* raiz: cluster 0 da area alocavel */
+    put32(buf + 64, gb1);
+    put32(buf + 68, gb2);
+    put32(buf + 80, first_ifc);                            /* ifc_list[0]; as demais ficam em 0 */
+    for (i = 1; i < ifc_n; i++) put32(buf + 80 + i * 4, first_ifc + i);
+    for (i = 0; i < 32; i++) put32(buf + 208 + i * 4, 0xFFFFFFFFu);    /* lista de blocos ruins: vazia */
+    buf[336] = 2;                                          /* tipo do cartao */
+    buf[337] = 0x2B;                                       /* flags */
+    if (wr_at(fd, 0, buf, 512)) goto fail;
+
+    /* 3) clusters da FAT indireta */
+    for (i = 0; i < ifc_n; i++) {
+        memset(buf, 0, sizeof(buf));
+        for (e = 0; e < EPC; e++) {
+            uint32_t idx = i * EPC + e;
+            put32(buf + e * 4, idx < fat_clusters ? first_fat + idx : 0xFFFFFFFFu);
+        }
+        if (wr_at(fd, (off_t)(first_ifc + i) * CLUSTER, buf, CLUSTER)) goto fail;
+    }
+
+    /* 4) clusters da FAT */
+    for (i = 0; i < fat_clusters; i++) {
+        for (e = 0; e < EPC; e++) {
+            uint32_t idx = i * EPC + e;
+            put32(buf + e * 4, (idx != 0 && idx < aend) ? 0x7FFFFFFFu : 0xFFFFFFFFu);
+        }
+        if (wr_at(fd, (off_t)(first_fat + i) * CLUSTER, buf, CLUSTER)) goto fail;
+    }
+
+    /* 5) pasta raiz (cluster 0 da area alocavel): "." e ".." */
+    memset(buf, 0, sizeof(buf));
+    make_dirent(buf, 0x8427, 2, now, ".");
+    make_dirent(buf + DIRENT, 0xA426, 0, now, "..");
+    if (wr_at(fd, (off_t)aoff * CLUSTER, buf, CLUSTER)) goto fail;
+
+    /* 6) bloco de apagamento "bom" de reserva (todo 0xFF), como o mymc */
+    memset(zero, 0xFF, 8192);
+    if (wr_at(fd, (off_t)gb2 * 8192, zero, 8192)) goto fail;
+
+    if (prog) prog(ctx, total, total);
+    close(fd);
+    return 0;
+fail:
+    close(fd);
+    unlink(path);
+    return rc;
+}

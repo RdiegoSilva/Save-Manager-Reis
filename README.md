@@ -20,7 +20,10 @@ Gerenciador de saves com interface estilo dashboard.
 - **Detalhes do save** (R3): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um (Memory Card, backups em Pasta e PSU).
 - **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
 - **Cartões virtuais (VMC do OPL):** os saves de dentro dos arquivos `.bin` / `.ps2` / `.vmc` em `mass:/VMC/` aparecem na aba USB com a etiqueta **VMC**. Dá para importar para o Memory Card real e converter para Pasta, PSU ou MAX.
-- **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa) e fazem parte do backup.
+- **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa), entram no backup e **podem ser restaurados** (a marca de save de PS1 é recriada; veja a seção abaixo).
+- **Cancelar operações longas:** em exportar, importar, converter, copiar entre cartões, verificar e criar VMC, **segure O**. O app termina o save em andamento e para (nada fica pela metade).
+- **Criar cartão virtual novo (VMC)** de 8, 16 ou 32 MB, direto em `mass:/VMC/`.
+- **Configurações salvas** em `mass:/SaveManagerReis/config.ini`: som, ordem da lista, formatos de exportação e conversão, slot e aba.
 - Aba **CONVERTER**: Pasta ⇄ PSU ⇄ MAX direto no pendrive.
 
 ## Como os backups ficam organizados no pendrive
@@ -72,6 +75,7 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Quadrado | Marcar / desmarcar todos |
 | Triângulo | Exportar (aba Memory Card) / Importar (aba USB) |
 | Círculo | Atualizar a lista |
+| O (segurado) | Cancela exportar, importar, converter, copiar, verificar e criar VMC |
 | L3 | Ordenar / filtrar / buscar |
 | R3 | Detalhes do save selecionado |
 | L1 / R1 | Trocar de aba (Memory Card / USB / Converter) |
@@ -103,11 +107,17 @@ Limite: o app não conserta o sistema de arquivos do cartão. Se o cartão estiv
 
 O OPL guarda os cartões virtuais em `VMC/` no pendrive (por exemplo `mass:/VMC/SLUS_200.52_0.bin`). O app lê o sistema de arquivos do cartão por dentro (com ou sem bytes de ECC) e lista cada save como um backup na aba **USB**, com a etiqueta **VMC** e o nome do arquivo do cartão. Use **Triângulo** para importar para o Memory Card real, ou a aba **CONVERTER** para gerar Pasta, PSU ou MAX.
 
+### Criar um VMC novo
+
+START → **Criar cartão virtual novo (VMC)**: escolha 8, 16 ou 32 MB, digite o nome (letras, números, `_`, `-` e `.`; sem a extensão) e confirme. O arquivo é criado em `mass:/VMC/NOME.bin` já formatado, sem ECC e com páginas de 512 bytes, que é o formato que o OPL usa. A gravação mostra uma barra de progresso (32 MB em USB pode levar alguns minutos) e **segurar O cancela** e apaga o arquivo incompleto. Se já existir um VMC com o nome, o app não sobrescreve. Depois, escolha esse arquivo nas configurações do jogo no OPL.
+
 Limites desta versão: só **leitura** (não grava saves dentro do VMC), só a pasta `mass:/VMC/` e só cartões no formato padrão (páginas de 512 bytes, clusters de 1 KB). Se o OPL estiver em outro dispositivo (rede ou HD interno), copie o `.bin` para `mass:/VMC/`.
 
 ## Saves de PS1
 
-Saves de PS1 gravados num Memory Card de PS2 aparecem com a etiqueta **PS1**, entram no filtro de região (**PS1**) e são exportados normalmente (Pasta ou PSU). Eles **não** são restaurados por este app ainda: ao importar ou copiar entre cartões, os saves de PS1 são ignorados com um aviso, porque a marca de "save de PS1" do cartão não é recriada pelo app. O formato MAX não guarda essa marca. A verificação de saves também os ignora, pois não têm `icon.sys`.
+Saves de PS1 gravados num Memory Card de PS2 aparecem com a etiqueta **PS1**, entram no filtro de região (**PS1**) e são exportados e importados como os demais (Pasta ou PSU; em Pasta o app grava um arquivo marcador `SMR_PS1.FLG` junto do backup, e em PSU a marca fica no cabeçalho da pasta). O formato MAX não guarda essa marca.
+
+Ao **importar ou copiar entre cartões**, o app recria a marca de "save de PS1" da pasta (atributo `0x9027`) com `mcSetFileInfo`, o mesmo método do uLaunchELF. **Esse passo ainda não foi testado num console real**: faça o primeiro teste com um save de PS1 que você possa perder e confira no navegador do PS2 se ele aparece como save de PS1. A verificação de saves ignora os de PS1, pois não têm `icon.sys`.
 
 ## Filtro e busca
 
@@ -165,6 +175,10 @@ uLaunchELF, FreeMcBoot, OPL, etc.
 
 - HD interno (APA/PFS).
 - Ícones 3D reais dos saves (`.ico` / `.icn`) no lugar dos ícones por região.
-- Restaurar saves de PS1 no cartão.
+- Escrever saves dentro de um VMC.
 - Ícone 3D também para saves em PSU / MAX.
 - Backup completo do cartão (imagem inteira).
+
+## Configurações
+
+O app grava `mass:/SaveManagerReis/config.ini` sozinho, cerca de 1,5 segundo depois de você mudar algo, e lê o arquivo ao abrir (se o pendrive estiver conectado). Guarda: som, ordem da lista, formato de exportação, formato de conversão, slot do Memory Card e aba. Filtro e busca **não** são guardados (para a lista não abrir "vazia"). Para voltar ao padrão, apague o arquivo.
