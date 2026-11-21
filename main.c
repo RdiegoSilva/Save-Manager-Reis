@@ -1741,14 +1741,14 @@ static void icon_pump(int t, Entry *L, int N)
 /* ---- nome do jogo: titulo do icon.sys (Shift-JIS, offset 0xC0, 68 bytes) ----
  * Converte o que for ASCII / letras e numeros de largura total para texto simples.
  * Kanji/kana sao ignorados (a fonte do app so tem ASCII); se nao sobrar texto, usa o nome da pasta. */
-static void sjis_title(const u8 *t, int nl, char *out, int max)
+/* decodifica os bytes [from, to) do titulo (Shift-JIS) para texto simples; kanji/kana sao ignorados */
+static void sjis_range(const u8 *t, int from, int to, char *out, int max)
 {
-    int i = 0, o = 0, alnum = 0;
-    while (i < 68 && t[i] && o < max - 2) {
+    int i = from, o = 0;
+    while (i < to && t[i] && o < max - 2) {
         u8 c = t[i], d;
         char ch = 0;
         int adv = 1;
-        if (i == nl && o > 0 && out[o - 1] != ' ') out[o++] = ' ';       /* quebra de linha do titulo */
         if (c >= 0x20 && c < 0x7F) {
             ch = (char)c;
         } else if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC)) {
@@ -1767,6 +1767,7 @@ static void sjis_title(const u8 *t, int nl, char *out, int max)
                 case 0x47: ch = ';';  break;
                 case 0x48: ch = '?';  break;
                 case 0x49: ch = '!';  break;
+                case 0x51: ch = '_';  break;
                 case 0x5E: ch = '/';  break;
                 case 0x60: ch = '~';  break;
                 case 0x65: case 0x66: ch = '\''; break;
@@ -1788,11 +1789,49 @@ static void sjis_title(const u8 *t, int nl, char *out, int max)
         if (!ch) continue;
         if (ch == ' ' && (o == 0 || out[o - 1] == ' ')) continue;
         out[o++] = ch;
-        if ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z')) alnum++;
     }
     while (o > 0 && out[o - 1] == ' ') o--;
     out[o] = 0;
+}
+
+/* titulo de duas linhas (icon.sys, offset 0xC0, 68 bytes; nl = onde comeca a 2a linha) -> uma linha de texto */
+static void sjis_title(const u8 *t, int nl, char *out, int max)
+{
+    char a[40], b[40];
+    int i, alnum = 0;
+    if (nl < 0 || nl > 68) nl = 68;
+    sjis_range(t, 0, nl, a, sizeof(a));
+    sjis_range(t, nl, 68, b, sizeof(b));
+    snprintf(out, (size_t)max, "%s%s%s", a, (a[0] && b[0]) ? " " : "", b);
+    for (i = 0; out[i]; i++)
+        if ((out[i] >= '0' && out[i] <= '9') || (out[i] >= 'A' && out[i] <= 'Z') || (out[i] >= 'a' && out[i] <= 'z')) alnum++;
     if (alnum < 2) out[0] = 0;
+}
+
+/* texto -> Shift-JIS de largura total (como os saves oficiais). Retorna os bytes gerados; ignora o que nao tem equivalente */
+static int sjis_encode(const char *str, u8 *dst, int cap)
+{
+    int o = 0;
+    for (; *str; str++) {
+        unsigned char ch = (unsigned char)*str;
+        u8 hi = 0x81, lo = 0;
+        if (ch >= '0' && ch <= '9')      { hi = 0x82; lo = (u8)(0x4F + (ch - '0')); }
+        else if (ch >= 'A' && ch <= 'Z') { hi = 0x82; lo = (u8)(0x60 + (ch - 'A')); }
+        else if (ch >= 'a' && ch <= 'z') { hi = 0x82; lo = (u8)(0x81 + (ch - 'a')); }
+        else switch (ch) {
+            case ' ': lo = 0x40; break;   case ',': lo = 0x41; break;   case '.': lo = 0x44; break;
+            case ':': lo = 0x46; break;   case ';': lo = 0x47; break;   case '?': lo = 0x48; break;
+            case '!': lo = 0x49; break;   case '_': lo = 0x51; break;   case '/': lo = 0x5E; break;
+            case '~': lo = 0x60; break;   case '\'': lo = 0x66; break;  case '"': lo = 0x68; break;
+            case '(': lo = 0x69; break;   case ')': lo = 0x6A; break;   case '+': lo = 0x7B; break;
+            case '-': lo = 0x7C; break;   case '%': lo = 0x93; break;   case '#': lo = 0x94; break;
+            case '&': lo = 0x95; break;   case '*': lo = 0x96; break;   case '@': lo = 0x97; break;
+            default: continue;
+        }
+        if (o + 2 > cap) break;
+        dst[o++] = hi; dst[o++] = lo;
+    }
+    return o;
 }
 
 /* le o icon.sys de dentro de um .psu (entradas de 512 bytes + dados alinhados em 1024) */
@@ -4057,6 +4096,132 @@ static void config_poll(void)
     if (memcmp(v, cfgSaved, sizeof(v)) != 0 && ++cfgStable >= 90) config_save();
 }
 
+/* ---------------- renomear o NOME DO JOGO (titulo do icon.sys) ---------------- */
+/* acha um arquivo dentro de um .psu: devolve onde os dados comecam e o tamanho */
+static int psu_find_file(const char *path, const char *fname, u32 *dataOff, u32 *size)
+{
+    u8 h[512];
+    int fd, k, found = 0;
+    u32 total;
+    fd = open(path, O_RDONLY);
+    if (fd < 0) return 0;
+    if (read(fd, h, 512) != 512 || !(ld16(h) & MC_ATTR_DIR)) { close(fd); return 0; }
+    total = ld32(h + 4);
+    if (total > 512) total = 512;
+    for (k = 0; k < (int)total; k++) {
+        u32 sz, pad;
+        if (read(fd, h, 512) != 512) break;
+        sz = ld32(h + 4);
+        pad = (1024 - (sz & 1023)) & 1023;
+        if (!(ld16(h) & MC_ATTR_DIR) && !strncmp((const char *)h + 64, fname, strlen(fname) + 1)) {
+            *dataOff = (u32)lseek(fd, 0, SEEK_CUR);
+            *size = sz;
+            found = 1;
+            break;
+        }
+        if (sz || pad) lseek(fd, (off_t)sz + (off_t)pad, SEEK_CUR);
+    }
+    close(fd);
+    return found;
+}
+
+/* le o icon.sys do save (Memory Card, backup em Pasta ou em PSU). Retorna o tamanho lido ou 0 */
+static int ics_read(const Entry *e, int isUsb, u8 *dst, int cap)
+{
+    char p[200];
+    int n = 0;
+    u8 *b;
+    if (isUsb && e->kind == FMT_PSU) return psu_read_sys(e->path, dst, cap);
+    if (!isUsb) snprintf(p, sizeof(p), "/%s/icon.sys", e->name);
+    else if (e->kind == FMT_DIR) snprintf(p, sizeof(p), "%s/icon.sys", e->path);
+    else return 0;
+    b = read_all(isUsb ? 1 : 0, p, &n);
+    if (!b) return 0;
+    if (n > cap) n = cap;
+    memcpy(dst, b, (size_t)n);
+    free(b);
+    return n;
+}
+
+/* grava o titulo novo. Cartao: reescreve o icon.sys (se falhar, restaura o original).
+ * Pasta/PSU: troca so os 70 bytes no lugar, sem mudar o tamanho do arquivo. 0 = ok */
+static int ics_write(const Entry *e, int isUsb, const u8 *orig, const u8 *neu, int len)
+{
+    char p[200];
+    if (!isUsb) {
+        snprintf(p, sizeof(p), "/%s/icon.sys", e->name);
+        g_done = 0; g_total = (u32)len;
+        if (mem_to_mc(neu, (u32)len, p, e->name) < 0) {
+            g_done = 0;
+            mem_to_mc(orig, (u32)len, p, e->name);             /* restaura o original */
+            return 1;
+        }
+        return 0;
+    } else {
+        u32 base = 0, sz = 0;
+        int fd, bad = 0;
+        if (e->kind == FMT_DIR) { snprintf(p, sizeof(p), "%s/icon.sys", e->path); }
+        else if (e->kind == FMT_PSU) {
+            snprintf(p, sizeof(p), "%s", e->path);
+            if (!psu_find_file(p, "icon.sys", &base, &sz) || sz < 0x104) return 1;
+        } else return 1;
+        fd = open(p, O_RDWR);
+        if (fd < 0) return 1;
+        if (lseek(fd, (off_t)base + 6, SEEK_SET) < 0 || wr_all(fd, neu + 6, 2)) bad = 1;
+        if (!bad && (lseek(fd, (off_t)base + 0xC0, SEEK_SET) < 0 || wr_all(fd, neu + 0xC0, 68))) bad = 1;
+        close(fd);
+        return bad;
+    }
+}
+
+static void rename_title(Entry *e, int isUsb)
+{
+    static u8 orig[2048], neu[2048];
+    char l1[20], l2[20], c1[40], c2[40], m[96];
+    u8 e1[40], e2[40];
+    int len, nl, n1, n2;
+
+    if (e->ps1) { info("SAVE DE PS1", "Saves de PS1 nao tem nome de jogo editavel"); return; }
+    if (isUsb && e->kind != FMT_DIR && e->kind != FMT_PSU) {
+        info("RENOMEAR NOME DO JOGO", "Neste formato: importe no cartao, renomeie e exporte de novo");
+        return;
+    }
+    len = ics_read(e, isUsb, orig, sizeof(orig));
+    if (len < 0x104 || memcmp(orig, "PS2D", 4) != 0) { info("RENOMEAR NOME DO JOGO", "Este save nao tem um icon.sys valido"); return; }
+
+    nl = (int)ld16(orig + 6);
+    if (nl <= 0 || nl >= 68) nl = 68;
+    sjis_range(orig + 0xC0, 0, nl, c1, sizeof(c1));
+    sjis_range(orig + 0xC0, nl, 68, c2, sizeof(c2));
+    snprintf(l1, sizeof(l1), "%.16s", c1);
+    snprintf(l2, sizeof(l2), "%.16s", c2);
+    if (!text_input("NOME DO JOGO - LINHA 1 (ate 16)", l1, 17)) return;
+    if (!text_input("NOME DO JOGO - LINHA 2 (pode ficar vazia)", l2, 17)) return;
+
+    n1 = sjis_encode(l1, e1, 32);
+    n2 = sjis_encode(l2, e2, 32);
+    if (n1 == 0 && n2 == 0) { toast_s("O nome do jogo nao pode ficar vazio", 1); return; }
+    if (n1 == 0) { memcpy(e1, e2, (size_t)n2); n1 = n2; n2 = 0; }       /* so a linha 2 preenchida: vira a linha 1 */
+
+    memcpy(neu, orig, (size_t)len);
+    memset(neu + 0xC0, 0, 68);
+    memcpy(neu + 0xC0, e1, (size_t)n1);
+    memcpy(neu + 0xC0 + n1, e2, (size_t)n2);
+    neu[6] = (u8)(n1 & 0xFF);                              /* onde comeca a 2a linha */
+    neu[7] = (u8)(n1 >> 8);
+
+    snprintf(ui.extra[0], sizeof(ui.extra[0]), "Antes:  %s%s%s", c1[0] ? c1 : "(sem texto latino)", c2[0] ? " / " : "", c2);
+    snprintf(ui.extra[1], sizeof(ui.extra[1]), "Depois: %s%s%s", l1[0] ? l1 : l2, (l1[0] && l2[0]) ? " / " : "", l1[0] ? l2 : "");
+    ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
+    ui.extraN = 2;
+    snprintf(m, sizeof(m), "Gravar o novo nome do jogo no icon.sys?");
+    if (!confirm("RENOMEAR NOME DO JOGO", m)) return;
+
+    if (ics_write(e, isUsb, orig, neu, len)) { toast_s("Falha ao gravar o novo nome (nada foi perdido)", 1); return; }
+    if (isUsb) refresh_usb(); else refresh_mc();
+    toast_s("Nome do jogo alterado", 0);
+}
+
 /* ---------------- renomear save (Memory Card) ou backup (USB) ---------------- */
 static int name_ok(const char *n)
 {
@@ -4071,6 +4236,17 @@ static void tool_rename(void)
 
     if (N <= 0 || cursorPos[tab] < 0 || cursorPos[tab] >= N) { toast("Selecione um save na lista%.0d", 0); return; }
     e = isUsb ? &usbList[cursorPos[tab]] : &mcList[cursorPos[tab]];
+
+    {
+        const char *it[3];
+        int c;
+        if (!isUsb) { it[0] = "Nome do jogo (titulo mostrado no PS2)";  it[1] = "Nome da pasta do save (tecnico)"; }
+        else        { it[0] = "Nome do jogo (titulo dentro do backup)"; it[1] = "Nome do arquivo do backup"; }
+        it[2] = "Cancelar";
+        c = menu_run("RENOMEAR", it, 3);
+        if (c < 0 || c == 2) return;
+        if (c == 0) { rename_title(e, isUsb); return; }
+    }
 
     if (!isUsb) {                                           /* pasta do save no Memory Card */
         int r = 0;
@@ -4346,7 +4522,7 @@ static void do_mc_tools(void)
         "Formatar Memory Card",
         "Organizar / filtrar / buscar  (L3)",
         "Detalhes do save  (R3)",
-        "Renomear save / backup",
+        "Renomear (nome do jogo, pasta ou backup)",
         "Recuperar save selecionado (corrompido)",
         "Criar cartao virtual novo (VMC)",
         "Ajustes (som, video, data e hora, creditos)",

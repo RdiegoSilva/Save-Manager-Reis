@@ -21,7 +21,7 @@ Gerenciador de saves com interface estilo dashboard.
 - **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
 - **Cartões virtuais (VMC do OPL):** os saves de dentro dos arquivos `.bin` / `.ps2` / `.vmc` em `mass:/VMC/` aparecem na aba USB com a etiqueta **VMC**. Dá para importar para o Memory Card real e converter para Pasta, PSU ou MAX.
 - **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa), entram no backup e **podem ser restaurados** (a marca de save de PS1 é recriada; veja a seção abaixo).
-- **Renomear** (START → Renomear save / backup): no Memory Card renomeia a pasta do save; na aba USB renomeia o backup (mantenha a data no começo do nome para ela continuar aparecendo).
+- **Renomear** (START → Renomear): troca o **nome do jogo** (o título que o PS2 mostra), o nome da pasta do save ou o nome do backup no USB.
 - **Recuperar save selecionado** (START): tenta ler o save com várias tentativas, grava uma cópia segura no USB e, se houve erro de leitura, oferece reescrever o save no cartão.
 - **Cancelar operações longas:** em exportar, importar, converter, copiar entre cartões, verificar e criar VMC, **segure O**. O app termina o save em andamento e para (nada fica pela metade).
 - **Criar cartão virtual novo (VMC)** de 8, 16 ou 32 MB, direto em `mass:/VMC/`.
@@ -123,9 +123,18 @@ Ao **importar ou copiar entre cartões**, o app recria a marca de "save de PS1" 
 
 ## Renomear
 
-**Memory Card:** troca o nome da pasta do save (até 31 caracteres). **Atenção:** o jogo procura o save pelo nome da pasta (por exemplo `BASLUS-20552GTA3`); com outro nome ele provavelmente não vai achar o save. O app avisa antes de renomear e confere depois se o cartão aceitou.
+START → **Renomear (nome do jogo, pasta ou backup)** abre três escolhas:
 
-**USB:** troca o nome do arquivo ou pasta do backup, sem mexer no save de dentro. Os backups criados pelo app começam com a data (`2026-11-16_21-18-05`); deixe a data no começo e acrescente o que quiser depois (`_GTA100`) e a data continua aparecendo no card. Cartões virtuais (VMC) não são renomeados por aqui.
+**1. Nome do jogo (título mostrado no PS2).** Troca o título que o navegador do PS2 mostra para o save, que fica dentro do `icon.sys`. São **duas linhas de até 16 caracteres** (a segunda pode ficar vazia), com letras, números e pontuação comum; o app grava em Shift-JIS de largura total, como os saves oficiais. O app mostra "Antes / Depois" e pede confirmação. Funciona em:
+- **Memory Card:** reescreve o `icon.sys`; se a gravação falhar, o original é restaurado.
+- **Backup em Pasta e em PSU:** troca só os 70 bytes do título no lugar, sem mudar o tamanho do arquivo nem tocar no resto.
+- Outros formatos (MAX, CBS, SPS, XPS, VMC): importe no cartão, renomeie e exporte de novo.
+- Saves de PS1 não têm título editável. Se o título original estiver só em japonês (kanji ou kana), o campo abre vazio e o nome novo substitui o antigo por completo.
+O nome do jogo **não afeta** o funcionamento: o jogo continua achando o save normalmente.
+
+**2. Nome da pasta do save (técnico).** No Memory Card, troca o nome da pasta (até 31 caracteres). **Atenção:** o jogo procura o save pelo nome da pasta (por exemplo `BASLUS-20552GTA3`); com outro nome ele provavelmente não vai achar o save. O app avisa antes e confere depois se o cartão aceitou.
+
+**3. Nome do arquivo do backup (USB).** Troca o nome do arquivo ou pasta do backup, sem mexer no save de dentro. Os backups criados pelo app começam com a data (`2026-11-16_21-18-05`); deixe a data no começo e acrescente o que quiser depois (`_GTA100`) e a data continua aparecendo no card. Cartões virtuais (VMC) não são renomeados por aqui.
 
 ## Recuperar save selecionado
 
