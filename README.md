@@ -95,9 +95,9 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Verificar saves:** lê todos os arquivos de cada save e confere se existe `icon.sys`. Lista os que têm problema e oferece apagá-los.
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
 - **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para outro slot, direto, sem passar pelo USB. Com multitap, pergunta qual slot é o destino. Avisa se o save já existe e confere o espaço livre.
-- **Som: Ligado/Desligado:** liga e desliga os efeitos sonoros.
-- **Créditos:** mostra a versão e o autor (Diego Reis).
-- **Acertar data e hora:** edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
+- **Ajustes:** submenu com Som (liga e desliga os efeitos), **Modo de vídeo**, Acertar data e hora e Créditos (versão e autor, Diego Reis).
+- **Modo de vídeo:** veja a seção abaixo.
+- **Acertar data e hora** (dentro de Ajustes): edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
 - **Backup de tudo para USB:** pergunta o formato (Pasta, PSU ou MAX) e exporta todos os saves nele.
 - **Recuperar cartão ilegível / corrompido:** tenta ler o cartão 4 vezes. Se continuar ilegível, oferece formatar.
@@ -155,7 +155,7 @@ O app troca a textura do ícone (o modelo 3D continua o mesmo) nos arquivos de �
 
 ## Som
 
-Efeitos sonoros gerados pelo próprio programa (sem arquivos de áudio): clique ao mover o cursor, ao marcar, ao trocar de aba, ao confirmar/voltar, aviso de sucesso, aviso de erro e um som de abertura. Para desligar: START → **Som: Ligado/Desligado**.
+Efeitos sonoros gerados pelo próprio programa (sem arquivos de áudio): clique ao mover o cursor, ao marcar, ao trocar de aba, ao confirmar/voltar, aviso de sucesso, aviso de erro e um som de abertura. Para desligar: START → **Ajustes → Som**.
 
 Usa `audsrv.irx` e `freesd.irx` do PS2SDK, embutidos no ELF (o `Makefile` já cuida disso). Os arquivos de código agora são `main.c`, `lzari.c`/`lzari.h` e `sound.c`/`sound.h`: mantenha todos na mesma pasta do `Makefile`.
 
@@ -198,6 +198,18 @@ uLaunchELF, FreeMcBoot, OPL, etc.
 - Ícone 3D também para saves em PSU / MAX.
 - Backup completo do cartão (imagem inteira).
 
+## Modo de vídeo
+
+START → **Ajustes → Modo de vídeo**. Há três opções:
+
+| Modo | Para que serve |
+|---|---|
+| **Automático** (padrão) | Usa o modo que o console detecta (480i NTSC ou 576i PAL). É o ideal para **conversor AV (cabo amarelo) → HDMI**. |
+| **TV de tubo (CRT)** | Mesmo vídeo entrelaçado, mas a interface é encolhida para a **área segura** (90% da tela), porque as TVs de tubo cortam as bordas. Fundo e barras continuam até a borda. |
+| **TV moderna (HDMI)** | **480p progressivo**, tela cheia, sem tremulação. Precisa de **cabo componente** ou de um **adaptador HDMI feito para o PS2**; conversores de AV composto quase nunca aceitam 480p. |
+
+Ao trocar, o app mostra "Manter este modo?" com contagem de 10 segundos: **X** mantém, **O** volta. Se a tela ficar preta, é só esperar: ele volta sozinho ao modo anterior. O modo escolhido é gravado no `config.ini` e aplicado na abertura (quando o pendrive é detectado). **Se a TV não mostrar o modo salvo, abra o app segurando L2 + R2:** o modo de vídeo salvo é ignorado e o app abre no Automático.
+
 ## Configurações
 
-O app grava `mass:/SaveManagerReis/config.ini` sozinho, cerca de 1,5 segundo depois de você mudar algo, e lê o arquivo ao abrir (se o pendrive estiver conectado). Guarda: som, ordem da lista, formato de exportação, formato de conversão, slot do Memory Card e aba. Filtro e busca **não** são guardados (para a lista não abrir "vazia"). Para voltar ao padrão, apague o arquivo.
+O app grava `mass:/SaveManagerReis/config.ini` sozinho, cerca de 1,5 segundo depois de você mudar algo, e lê o arquivo ao abrir (se o pendrive estiver conectado). Guarda: som, ordem da lista, formato de exportação, formato de conversão, slot do Memory Card, aba e modo de vídeo. Filtro e busca **não** são guardados (para a lista não abrir "vazia"). Para voltar ao padrão, apague o arquivo.

@@ -275,24 +275,50 @@ static DFile dtF[96];
 static int   dtN = 0, dtScroll = 0, dtOpen = 0;
 static char  dtTitle[48], dtL[3][80], dtNote[80];
 
+/* ---- modo de video: a interface e desenhada numa tela virtual (largura x altura do gsGlobal).
+ * No modo "TV de tubo" ela e encolhida para a area segura (as TVs de tubo cortam as bordas);
+ * retangulos que encostam na borda da tela virtual (fundo, barras) continuam indo ate a borda real. ---- */
+enum { VID_AUTO = 0, VID_CRT = 1, VID_HDMI = 2 };
+static const char *VID_NAME[3] = { "Automatico", "TV de tubo (CRT)", "TV moderna (HDMI)" };
+static int   vidMode = VID_AUTO;
+static float vsc = 1.0f, vox = 0.0f, voy = 0.0f;
+static int   vidOrigMode, vidOrigW, vidOrigH, vidOrigInter, vidOrigField;     /* modo detectado na abertura */
+#define VX(x) (vox + (x) * vsc)
+#define VY(y) (voy + (y) * vsc)
+
+static void vbox(float x, float y, float w, float h, float *X0, float *Y0, float *X1, float *Y1)
+{
+    float rw = (float)gsGlobal->Width, rh = (float)gsGlobal->Height;
+    *X0 = (x <= 0)      ? 0  : VX(x);
+    *Y0 = (y <= 0)      ? 0  : VY(y);
+    *X1 = (x + w >= rw) ? rw : VX(x + w);
+    *Y1 = (y + h >= rh) ? rh : VY(y + h);
+}
+
 static void rect(float x, float y, float w, float h, u64 c)
 {
-    gsKit_prim_sprite(gsGlobal, x, y, x + w, y + h, 1, c);
+    float X0, Y0, X1, Y1;
+    vbox(x, y, w, h, &X0, &Y0, &X1, &Y1);
+    gsKit_prim_sprite(gsGlobal, X0, Y0, X1, Y1, 1, c);
 }
 
 static void vgrad(float x, float y, float w, float h, u64 c1, u64 c2)
 {
-    gsKit_prim_quad_gouraud(gsGlobal, x, y, x + w, y, x, y + h, x + w, y + h, 1, c1, c1, c2, c2);
+    float X0, Y0, X1, Y1;
+    vbox(x, y, w, h, &X0, &Y0, &X1, &Y1);
+    gsKit_prim_quad_gouraud(gsGlobal, X0, Y0, X1, Y0, X0, Y1, X1, Y1, 1, c1, c1, c2, c2);
 }
 
 static void hgrad(float x, float y, float w, float h, u64 c1, u64 c2)
 {
-    gsKit_prim_quad_gouraud(gsGlobal, x, y, x + w, y, x, y + h, x + w, y + h, 1, c1, c2, c1, c2);
+    float X0, Y0, X1, Y1;
+    vbox(x, y, w, h, &X0, &Y0, &X1, &Y1);
+    gsKit_prim_quad_gouraud(gsGlobal, X0, Y0, X1, Y0, X0, Y1, X1, Y1, 1, c1, c2, c1, c2);
 }
 
 static void text(float x, float y, float scale, u64 col, const char *s)
 {
-    gsKit_fontm_print_scaled(gsGlobal, font, x, y, 1, scale, col, s);
+    gsKit_fontm_print_scaled(gsGlobal, font, VX(x), VY(y), 1, scale * vsc, col, s);
 }
 
 static float tw(const char *s, float scale) { return (float)strlen(s) * FW * scale; }
@@ -463,10 +489,48 @@ static void draw_icon(int slot, const Icon *ic, float x, float y, float sz)
         slotOwner[slot] = ic;
         slotVer[slot] = ic->ver;
     }
-    gsKit_prim_quad_gouraud(gsGlobal, x, y, x + sz, y, x, y + sz, x + sz, y + sz, 1,
-                            ic->bg[0], ic->bg[1], ic->bg[2], ic->bg[3]);
-    gsKit_prim_sprite_texture(gsGlobal, &iconTex[slot], x, y, 0.0f, 0.0f, x + sz, y + sz,
-                              (float)ICON_SZ, (float)ICON_SZ, 1, GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x80, 0x00));
+    {
+        float X0 = VX(x), Y0 = VY(y), X1 = VX(x + sz), Y1 = VY(y + sz);
+        gsKit_prim_quad_gouraud(gsGlobal, X0, Y0, X1, Y0, X0, Y1, X1, Y1, 1,
+                                ic->bg[0], ic->bg[1], ic->bg[2], ic->bg[3]);
+        gsKit_prim_sprite_texture(gsGlobal, &iconTex[slot], X0, Y0, 0.0f, 0.0f, X1, Y1,
+                                  (float)ICON_SZ, (float)ICON_SZ, 1, GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x80, 0x00));
+    }
+}
+
+/* ---- aplica o modo de video em execucao (mesmo caminho que o driver SDL do PS2 usa) ---- */
+static void video_apply(int mode)
+{
+    int i;
+    if (mode == VID_HDMI) {                          /* 480p progressivo */
+        gsGlobal->Mode      = GS_MODE_DTV_480P;
+        gsGlobal->Interlace = GS_NONINTERLACED;
+        gsGlobal->Field     = GS_FRAME;
+        gsGlobal->Width     = 640;
+        gsGlobal->Height    = 480;
+    } else {                                         /* automatico e TV de tubo: modo detectado na abertura */
+        gsGlobal->Mode      = vidOrigMode;
+        gsGlobal->Interlace = vidOrigInter;
+        gsGlobal->Field     = vidOrigField;
+        gsGlobal->Width     = vidOrigW;
+        gsGlobal->Height    = vidOrigH;
+    }
+    gsKit_vram_clear(gsGlobal);
+    gsKit_init_screen(gsGlobal);
+    gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
+    gsKit_mode_switch(gsGlobal, GS_ONESHOT);
+    gsKit_fontm_upload(gsGlobal, font);              /* a VRAM foi limpa: reenvia a fonte e os slots de icone */
+    icon_slots_init();
+    for (i = 0; i < ICON_SLOTS; i++) { slotOwner[i] = NULL; slotVer[i] = 0; }
+    if (mode == VID_CRT) {
+        vsc = 0.90f;                                 /* area segura: 90% da tela */
+        vox = (float)gsGlobal->Width  * (1.0f - vsc) / 2.0f;
+        voy = (float)gsGlobal->Height * (1.0f - vsc) / 2.0f;
+    } else {
+        vsc = 1.0f; vox = 0.0f; voy = 0.0f;
+    }
+    vidMode = mode;
+    gsKit_clear(gsGlobal, RGBA(0, 0, 0, 0x80));
 }
 
 static void fmt_size(char *b, int n, u32 sz)
@@ -3907,12 +3971,12 @@ static void tool_new_vmc(void)
 
 /* ---------------- configuracoes (mass:/SaveManagerReis/config.ini) ---------------- */
 #define CFG_PATH ROOT_DIR "/config.ini"
-#define CFG_N 6
+#define CFG_N 7
 static int cfgSaved[CFG_N], cfgSeen[CFG_N], cfgStable = 0, cfgLoaded = 0;
 
 static void cfg_cur(int *v)
 {
-    v[0] = snd_enabled(); v[1] = sortMode; v[2] = expFmt; v[3] = convFmt; v[4] = mcSlot; v[5] = tab;
+    v[0] = snd_enabled(); v[1] = sortMode; v[2] = expFmt; v[3] = convFmt; v[4] = mcSlot; v[5] = tab; v[6] = vidMode;
 }
 
 static void config_save(void)
@@ -3927,8 +3991,8 @@ static void config_save(void)
     if (fd < 0) return;
     n = snprintf(b, sizeof(b),
                  "; Save Manager Reis - configuracoes (gravado automaticamente)\n"
-                 "sound=%d\nsort=%d\nexport_format=%d\nconvert_format=%d\nslot=%d\ntab=%d\n",
-                 v[0], v[1], v[2], v[3], v[4], v[5]);
+                 "sound=%d\nsort=%d\nexport_format=%d\nconvert_format=%d\nslot=%d\ntab=%d\nvideo=%d\n",
+                 v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
     if (n > 0) write(fd, b, (size_t)n);
     close(fd);
 }
@@ -3937,7 +4001,7 @@ static void config_save(void)
 static void config_load_apply(int rebuild)
 {
     char b[512], *p;
-    int fd, n, oldSlot = mcSlot, oldSort = sortMode;
+    int fd, n, oldSlot = mcSlot, oldSort = sortMode, wantVid = vidMode;
     if (!usb_ready()) return;
     cfgLoaded = 1;
     fd = open(CFG_PATH, O_RDONLY);
@@ -3956,12 +4020,15 @@ static void config_load_apply(int rebuild)
                     else if (!strcmp(key, "convert_format") && val >= FMT_DIR && val <= FMT_MAX) convFmt = val;
                     else if (!strcmp(key, "slot")           && val >= 0 && val < nCards)   mcSlot = val;
                     else if (!strcmp(key, "tab")            && val >= 0 && val <= 2)       tab = val;
+                    else if (!strcmp(key, "video")          && val >= 0 && val <= 2)       wantVid = val;
                 }
                 while (*p && *p != '\n') p++;
                 if (*p) p++;
             }
         }
     }
+    /* modo de video salvo: segurar L2+R2 ao abrir ignora (caso a TV nao mostre o modo salvo) */
+    if (wantVid != vidMode && !(!rebuild && (pad_old & (PAD_L2 | PAD_R2)) == (PAD_L2 | PAD_R2))) video_apply(wantVid);
     cfg_cur(cfgSaved);
     memcpy(cfgSeen, cfgSaved, sizeof(cfgSaved));
     cfgStable = 0;
@@ -4206,10 +4273,70 @@ static void tool_recover_save(void)
     pk_free();
 }
 
+/* ---------------- ajustes: som, modo de video, data e hora, creditos ---------------- */
+static void tool_video(void)
+{
+    const char *it[4] = { "Automatico (padrao)", "TV de tubo (CRT): 480i, margem de seguranca", "TV moderna (HDMI): 480p, tela cheia", "Voltar" };
+    int c, old, keep = 0, done = 0, t;
+    c = menu_run("MODO DE VIDEO", it, 4);
+    if (c < 0 || c > 2 || c == vidMode) return;
+    if (c == VID_HDMI) {
+        snprintf(ui.extra[0], sizeof(ui.extra[0]), "Precisa de cabo componente ou adaptador HDMI do PS2.");
+        snprintf(ui.extra[1], sizeof(ui.extra[1]), "Conversor AV (amarelo) para HDMI costuma nao aceitar 480p.");
+        ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_RED;
+        ui.extraN = 2;
+        if (!confirm("MODO HDMI (480p)", "Trocar para 480p progressivo?")) return;
+    }
+    old = vidMode;
+    video_apply(c);
+
+    /* confirmacao com contagem regressiva: se a tela ficar preta, volta sozinho ao modo anterior */
+    snprintf(ui.title, sizeof(ui.title), "MANTER ESTE MODO?");
+    ui.modal = 1;
+    for (t = 600; t > 0 && !done; t--) {
+        read_pad();
+        if (pad_new & PAD_CROSS)  { keep = 1; done = 1; }
+        if (pad_new & PAD_CIRCLE) { done = 1; }
+        snprintf(ui.msg, sizeof(ui.msg), "X mantem, O volta. Volta sozinho em %d s", (t + 59) / 60);
+        render();
+        present();
+    }
+    ui.modal = 0;
+    if (keep) { snd_play(SND_OK); toast_s("Modo de video aplicado", 0); }
+    else      { video_apply(old); toast_s("Modo de video anterior restaurado", 0); }
+}
+
+static void show_credits(void)
+{
+    snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
+    snprintf(ui.extra[1], sizeof(ui.extra[1]), "Criado por Diego Reis");
+    ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
+    ui.extraN = 2;
+    info("SAVE MANAGER REIS " APP_VERSION, "Creditos");
+    ui.extraN = 0;
+}
+
+static void tool_settings(void)
+{
+    for (;;) {
+        char l0[40], l1[56];
+        const char *it[5];
+        int c;
+        snprintf(l0, sizeof(l0), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
+        snprintf(l1, sizeof(l1), "Modo de video: %s", VID_NAME[vidMode]);
+        it[0] = l0; it[1] = l1; it[2] = "Acertar data e hora"; it[3] = "Creditos"; it[4] = "Voltar";
+        c = menu_run("AJUSTES", it, 5);
+        if (c < 0 || c == 4) return;
+        if (c == 0)      { snd_set(!snd_enabled()); snd_play(SND_OK); }
+        else if (c == 1) tool_video();
+        else if (c == 2) tool_clock();
+        else if (c == 3) show_credits();
+    }
+}
+
 static void do_mc_tools(void)
 {
-    char soundLabel[24];
-    const char *items[16] = {
+    const char *items[14] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -4222,38 +4349,19 @@ static void do_mc_tools(void)
         "Renomear save / backup",
         "Recuperar save selecionado (corrompido)",
         "Criar cartao virtual novo (VMC)",
-        NULL,
-        "Acertar data e hora",
-        "Creditos",
+        "Ajustes (som, video, data e hora, creditos)",
         "Sair do aplicativo"
     };
     int c;
-    snprintf(soundLabel, sizeof(soundLabel), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
-    items[12] = soundLabel;
-    c = menu_run("FERRAMENTAS", items, 16);
+    c = menu_run("FERRAMENTAS", items, 14);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) { tool_view(); return; }
     if (c == 8) { show_details(tab); return; }
     if (c == 11) { tool_new_vmc(); return; }
     if (c == 10) { tool_recover_save(); return; }
     if (c == 9) { tool_rename(); return; }
-    if (c == 12) {
-        snd_set(!snd_enabled());
-        snd_play(SND_OK);
-        toast(snd_enabled() ? "Som ligado%.0d" : "Som desligado%.0d", 0);
-        return;
-    }
-    if (c == 13) { tool_clock(); return; }
-    if (c == 14) {
-        snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
-        snprintf(ui.extra[1], sizeof(ui.extra[1]), "Criado por Diego Reis");
-        ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
-        ui.extraN = 2;
-        info("SAVE MANAGER REIS " APP_VERSION, "Creditos");
-        ui.extraN = 0;
-        return;
-    }
-    if (c == 15) {
+    if (c == 12) { tool_settings(); return; }
+    if (c == 13) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) { config_flush(); quitReq = 1; }
         return;
     }
@@ -4338,6 +4446,8 @@ static void init_iop(void)
 static void init_gfx(void)
 {
     gsGlobal = gsKit_init_global();
+    vidOrigMode = gsGlobal->Mode; vidOrigW = gsGlobal->Width; vidOrigH = gsGlobal->Height;
+    vidOrigInter = gsGlobal->Interlace; vidOrigField = gsGlobal->Field;
     gsGlobal->PSM = GS_PSM_CT32;
     gsGlobal->PSMZ = GS_PSMZ_16S;
     gsGlobal->ZBuffering = GS_SETTING_ON;       /* Z-buffer real (alocado e limpo pelo gsKit_clear) */
