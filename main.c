@@ -256,10 +256,19 @@ static Now clk;
 static int clkT;
 static int clkEditing = 0, clkSel = 0, clkEd[5];     /* editor: dia, mes, ano, hora, minuto */
 /* entrada de texto (busca) */
-static int  inEditing = 0, inLen = 0, inCh = 0;
+static int  inEditing = 0, inLen = 0, inKr = 0, inKc = 0, inCaps = 1;    /* teclado na tela */
 static char inBuf[40];
 static const char *inTitle = "";
-static const char IN_CS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.";
+static const char *KB_ROW[4] = { "ABCDEFGHIJ", "KLMNOPQRST", "UVWXYZ0123", "456789_-." };
+static const char *KB_ACT[6] = { "Aa", "ESPACO", "APAGAR", "LIMPAR", "OK", "CANCELAR" };
+static const float KB_ACTW[6] = { 56, 96, 90, 80, 60, 94 };
+static int kb_cols(int r) { return r < 3 ? 10 : (r == 3 ? 9 : 6); }
+static char kb_char(int r, int c)                      /* caractere da tecla (respeita maiuscula/minuscula) */
+{
+    char ch = KB_ROW[r][c];
+    if (!inCaps && ch >= 'A' && ch <= 'Z') ch = (char)(ch + 32);
+    return ch;
+}
 /* tela de detalhes do save */
 typedef struct { char name[36]; u32 size; } DFile;
 static DFile dtF[96];
@@ -730,23 +739,35 @@ static void render(void)
         }
         text(mx + 14, my + mh - 18, 0.38f, C_MUTED, "X escolher    O voltar");
     } else if (inEditing) {
-        float bw = 500, bh = 190, bx = (W - bw) / 2, by = (H - bh) / 2, fx;
-        char pend[2];
+        float bw = 540, bh = 332, bx = (W - bw) / 2, by = (H - bh) / 2, gx, ax;
+        int r, c;
+        char kc[2] = { 0, 0 };
         rect(0, 0, W, H, C_DIM);
         rect(bx + 4, by + 5, bw, bh, C_SHADOW);
         rect(bx, by, bw, bh, C_BAR);
         hgrad(bx, by, bw, 4, C_ACC, C_ACC2);
-        ctext(W / 2, by + 14, 0.65f, C_TXT, inTitle);
-        rect(bx + 20, by + 54, bw - 40, 44, C_CARD);
-        fx = bx + 30;
-        text(fx, by + 64, 0.80f, C_TXT, inBuf);
-        fx += tw(inBuf, 0.80f);
-        pend[0] = IN_CS[inCh]; pend[1] = 0;
-        hgrad(fx, by + 60, 24, 32, C_ACC, C_ACC2);
-        ctext(fx + 12, by + 64, 0.80f, C_DARK, pend);
-        ctext(W / 2, by + 112, 0.42f, C_MUTED, "Cima/Baixo escolhe a letra    L1/R1 pula 6");
-        ctext(W / 2, by + 130, 0.42f, C_MUTED, "Direita adiciona    Esquerda apaga    Quadrado limpa");
-        ctext(W / 2, by + 154, 0.42f, C_ACC2, "X confirmar    O cancelar");
+        ctext(W / 2, by + 12, 0.60f, C_MUTED, inTitle);
+        rect(bx + 20, by + 40, bw - 40, 36, C_CARD);
+        text(bx + 30, by + 48, 0.70f, C_TXT, inBuf);
+        if ((frameNo >> 4) & 1) rect(bx + 32 + tw(inBuf, 0.70f), by + 46, 3, 22, C_ACC);      /* cursor piscando */
+        gx = bx + (bw - (10 * 44 + 9 * 4)) / 2;
+        for (r = 0; r < 4; r++) {
+            for (c = 0; c < kb_cols(r); c++) {
+                float kx = gx + c * 48, ky = by + 90 + r * 38;
+                kc[0] = kb_char(r, c);
+                if (r == inKr && c == inKc) { hgrad(kx, ky, 44, 32, C_ACC, C_ACC2); ctext(kx + 22, ky + 8, 0.62f, C_DARK, kc); }
+                else                        { rect(kx, ky, 44, 32, C_CARD);          ctext(kx + 22, ky + 8, 0.62f, C_TXT, kc); }
+            }
+        }
+        ax = bx + (bw - 496) / 2;
+        for (c = 0; c < 6; c++) {
+            const char *lb = (c == 0) ? (inCaps ? "ABC" : "abc") : KB_ACT[c];
+            if (inKr == 4 && c == inKc) { hgrad(ax, by + 246, KB_ACTW[c], 32, C_ACC, C_ACC2); ctext(ax + KB_ACTW[c] / 2, by + 255, 0.48f, C_DARK, lb); }
+            else                        { rect(ax, by + 246, KB_ACTW[c], 32, C_CARD);          ctext(ax + KB_ACTW[c] / 2, by + 255, 0.48f, C_TXT, lb); }
+            ax += KB_ACTW[c] + 4;
+        }
+        ctext(W / 2, by + 292, 0.38f, C_MUTED, "X digita   Quadrado apaga   Triangulo espaco   L1/R1 maiuscula");
+        ctext(W / 2, by + 308, 0.38f, C_ACC2, "START confirma    O cancela");
     } else if (dtOpen) {
         float bw = 560, bh = 392, bx = (W - bw) / 2, by = (H - bh) / 2;
         int k, vis = 10;
@@ -1852,31 +1873,59 @@ static void view_apply_all(void)
     icon_free_all(TAB_USB);
 }
 
-/* ---- entrada de texto: Cima/Baixo escolhe a letra, Direita adiciona, Esquerda apaga ---- */
+/* ---- teclado na tela: direcional move, X digita, Quadrado apaga, Triangulo espaco, L1/R1 maiuscula, START confirma ---- */
 static int text_input(const char *title, char *buf, int max)
 {
-    const int ncs = (int)sizeof(IN_CS) - 1;
     int done = 0, ok = 0, lim = max - 1 < (int)sizeof(inBuf) - 1 ? max - 1 : (int)sizeof(inBuf) - 1;
     snprintf(inBuf, sizeof(inBuf), "%.*s", lim, buf);
     inLen = (int)strlen(inBuf);
-    inCh = 0;
+    inKr = 0; inKc = 0; inCaps = 1;
     inTitle = title;
     inEditing = 1;
     while (!done) {
+        int dr = 0, dc = 0, press = -1;                     /* press: 0 tecla, 1 espaco, 2 apagar, 3 limpar, 4 ok, 5 cancelar, 6 maiuscula */
         read_pad();
-        if (pad_new & PAD_UP)    { inCh = (inCh + 1) % ncs; snd_play(SND_MOVE); }
-        if (pad_new & PAD_DOWN)  { inCh = (inCh + ncs - 1) % ncs; snd_play(SND_MOVE); }
-        if (pad_new & PAD_R1)    { inCh = (inCh + 6) % ncs; snd_play(SND_MOVE); }
-        if (pad_new & PAD_L1)    { inCh = (inCh + ncs - 6) % ncs; snd_play(SND_MOVE); }
-        if (pad_new & PAD_RIGHT) { if (inLen < lim) { inBuf[inLen++] = IN_CS[inCh]; inBuf[inLen] = 0; snd_play(SND_SELECT); } }
-        if (pad_new & PAD_LEFT)  { if (inLen > 0) { inBuf[--inLen] = 0; snd_play(SND_BACK); } }
-        if (pad_new & PAD_SQUARE) { inLen = 0; inBuf[0] = 0; snd_play(SND_BACK); }
-        if (pad_new & PAD_CIRCLE) { done = 1; snd_play(SND_BACK); }
-        if (pad_new & PAD_CROSS)  { ok = 1; done = 1; snd_play(SND_OK); }
+        if (pad_new & PAD_UP)    dr = -1;
+        if (pad_new & PAD_DOWN)  dr = 1;
+        if (pad_new & PAD_LEFT)  dc = -1;
+        if (pad_new & PAD_RIGHT) dc = 1;
+        if (dr) {
+            int nr = (inKr + dr + 5) % 5, nc;
+            if (inKr < 4 && nr == 4)      nc = inKc * 6 / 10;                       /* grade -> botoes */
+            else if (inKr == 4 && nr < 4) nc = inKc * 10 / 6;                       /* botoes -> grade */
+            else                          nc = inKc;
+            if (nc >= kb_cols(nr)) nc = kb_cols(nr) - 1;
+            inKr = nr; inKc = nc;
+            snd_play(SND_MOVE);
+        }
+        if (dc) {
+            inKc = (inKc + dc + kb_cols(inKr)) % kb_cols(inKr);
+            snd_play(SND_MOVE);
+        }
+        if (pad_new & PAD_CROSS) {
+            if (inKr < 4) press = 0;
+            else          press = (inKc == 0) ? 6 : inKc;                           /* Aa, ESPACO, APAGAR, LIMPAR, OK, CANCELAR */
+        }
+        if (pad_new & PAD_SQUARE)   press = 2;
+        if (pad_new & PAD_TRIANGLE) press = 1;
+        if (pad_new & (PAD_L1 | PAD_R1)) press = 6;
+        if (pad_new & PAD_START)    press = 4;
+        if (pad_new & PAD_CIRCLE)   press = 5;
+        switch (press) {
+        case 0: if (inLen < lim) { inBuf[inLen++] = kb_char(inKr, inKc); inBuf[inLen] = 0; snd_play(SND_SELECT); } break;
+        case 1: if (inLen < lim && inLen > 0 && inBuf[inLen - 1] != ' ') { inBuf[inLen++] = ' '; inBuf[inLen] = 0; snd_play(SND_SELECT); } break;
+        case 2: if (inLen > 0) { inBuf[--inLen] = 0; snd_play(SND_BACK); } break;
+        case 3: inLen = 0; inBuf[0] = 0; snd_play(SND_BACK); break;
+        case 4: ok = 1; done = 1; snd_play(SND_OK); break;
+        case 5: done = 1; snd_play(SND_BACK); break;
+        case 6: inCaps = !inCaps; snd_play(SND_TAB); break;
+        default: break;
+        }
         render();
         present();
     }
     inEditing = 0;
+    while (inLen > 0 && inBuf[inLen - 1] == ' ') inBuf[--inLen] = 0;                /* sem espaco sobrando no fim */
     if (ok) snprintf(buf, max, "%s", inBuf);
     return ok;
 }

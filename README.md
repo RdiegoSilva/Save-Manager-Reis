@@ -140,7 +140,7 @@ Limites: ele recupera o que o cartão ainda consegue ler e corrige a estrutura d
 
 ## Filtro e busca
 
-**L3** (ou START → Organizar / filtrar / buscar). Na busca, use Cima/Baixo para escolher a letra, **Direita** para adicionar, **Esquerda** para apagar, **Quadrado** para limpar, L1/R1 pulam 6 letras, **X** confirma. A busca olha o nome da pasta e o nome do jogo. O backup de tudo ignora filtro e busca.
+**L3** (ou START → Organizar / filtrar / buscar). A busca abre o **teclado na tela** (o mesmo usado para nomes de save, backup e VMC): o direcional move o cursor, **X** digita a tecla, **Quadrado** apaga, **Triângulo** põe espaço, **L1/R1** alternam maiúsculas e minúsculas (o teclado abre em maiúsculas), **START** confirma e **O** cancela. Embaixo da grade há botões para Aa, espaço, apagar, limpar, OK e cancelar. A busca olha o nome da pasta e o nome do jogo, sem diferenciar maiúsculas. O backup de tudo ignora filtro e busca.
 
 ## Ícone personalizado
 
