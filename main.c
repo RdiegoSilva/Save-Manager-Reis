@@ -520,6 +520,7 @@ static void video_apply(int mode)
     gsKit_set_primalpha(gsGlobal, GS_SETREG_ALPHA(0, 1, 0, 1, 0), 0);
     gsKit_mode_switch(gsGlobal, GS_ONESHOT);
     gsKit_fontm_upload(gsGlobal, font);              /* a VRAM foi limpa: reenvia a fonte e os slots de icone */
+    font->Spacing = 0.62f;                           /* o upload zera o espacamento: refaz, como na abertura */
     icon_slots_init();
     for (i = 0; i < ICON_SLOTS; i++) { slotOwner[i] = NULL; slotVer[i] = 0; }
     if (mode == VID_CRT) {
