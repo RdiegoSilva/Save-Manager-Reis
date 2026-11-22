@@ -175,8 +175,8 @@ static char padbuf[256]               __attribute__((aligned(64)));
 static int quitReq = 0;
 static int expFmt = FMT_DIR, convFmt = FMT_PSU, mcRawN = 0, mcNoFmt = 0;
 static const char *FMT_NAME[] = { "Pasta", "PSU", "MAX", "CBS", "SPS", "XPS", "VMC", "ZIP" };
-/* proximo formato de exportacao no ciclo do R2: Pasta -> PSU -> MAX -> ZIP */
-static int next_exp_fmt(int f) { return f == FMT_DIR ? FMT_PSU : (f == FMT_PSU ? FMT_MAX : (f == FMT_MAX ? FMT_ZIP : FMT_DIR)); }
+/* proximo formato de exportacao no ciclo do R2: Pasta -> PSU -> MAX -> CBS -> ZIP */
+static int next_exp_fmt(int f) { return f == FMT_DIR ? FMT_PSU : (f == FMT_PSU ? FMT_MAX : (f == FMT_MAX ? FMT_CBS : (f == FMT_CBS ? FMT_ZIP : FMT_DIR))); }
 
 static u32 g_done, g_total;
 static u32 pad_new, pad_old;
@@ -287,6 +287,16 @@ static int   dtN = 0, dtScroll = 0, dtOpen = 0;
 static int   tutOpen = 0, tutPage = 0;      /* tutorial (menu START) */
 static char  dtTitle[48], dtL[3][80], dtNote[80];
 static int   dtReg = 4;
+static int   dtSel = 0, dtCan = 0;                   /* arquivo selecionado; 1 = Memory Card (pode exportar/importar/editar) */
+/* editor hex */
+static int   hexOpen = 0, hexEditing = 0, hexDirty = 0;
+static u8   *hexBuf = NULL, *hexOrig = NULL;
+static u32   hexN = 0, hexCur = 0, hexTop = 0;
+static u8    hexSaved = 0;
+static char  hexName[40], hexSave[40];
+static void hex_edit(const char *save, const DFile *f);
+static int  dt_export_file(const char *save, const DFile *f);
+static int  dt_import_file(const char *save);
 
 /* ---- modo de video: a interface e desenhada numa tela virtual (largura x altura do gsGlobal).
  * No modo "TV de tubo" ela e encolhida para a area segura (as TVs de tubo cortam as bordas);
@@ -1065,6 +1075,60 @@ static void render(void)
         }
         ctext(W / 2, by + 292, 0.38f, C_MUTED, "X digita   Quadrado apaga   Triangulo espaco   L1/R1 maiuscula");
         ctext(W / 2, by + 308, 0.38f, C_ACC2, "START confirma    O cancela");
+    } else if (hexOpen) {
+        float bw = 580, bh = 372, bx = (W - bw) / 2, by = (H - bh) / 2, cw = FW * 0.40f;
+        float xa = bx + 18, xh = xa + 10 * cw, xc = xh + 49 * cw;
+        char ln[100], hx[64], as[20];
+        u32 r, c, base;
+        window(bx, by, bw, bh);
+        ctext(W / 2, by + 12, 0.60f, C_MUTED, "EDITOR HEX");
+        snprintf(ln, sizeof(ln), "%s / %s  -  %lu bytes%s", hexSave, hexName, (unsigned long)hexN, hexDirty ? "   [ALTERADO]" : "");
+        text(bx + 18, by + 34, 0.42f, hexDirty ? C_RED : C_ACC, ln);
+        rect(bx + 18, by + 54, bw - 36, 2, C_CARD);
+        for (r = 0; r < 16; r++) {
+            u32 row = hexTop + r;
+            float ry = by + 62 + r * 15;
+            base = row * 16;
+            if (base >= hexN) break;
+            if ((hexCur >> 4) == row) {
+                c = hexCur & 15;
+                rect(xh + c * 3 * cw - 2, ry - 1, 2 * cw + 4, 14, hexEditing ? C_GREEN : C_ACC);
+                rect(xc + c * cw - 1, ry - 1, cw + 2, 14, hexEditing ? C_GREEN : C_ACC);
+            }
+            snprintf(ln, sizeof(ln), "%08lX", (unsigned long)base);
+            text(xa, ry, 0.40f, C_MUTED, ln);
+            hx[0] = 0;
+            for (c = 0; c < 16; c++) {
+                char t[4];
+                if (base + c < hexN) snprintf(t, sizeof(t), "%02X ", hexBuf[base + c]); else snprintf(t, sizeof(t), "   ");
+                strcat(hx, t);
+                as[c] = (base + c < hexN && hexBuf[base + c] >= 32 && hexBuf[base + c] < 127) ? (char)hexBuf[base + c] : '.';
+            }
+            as[16] = 0;
+            text(xh, ry, 0.40f, C_TXT, hx);
+            text(xc, ry, 0.40f, C_TXT, as);
+            if ((hexCur >> 4) == row) {
+                char t[4];
+                c = hexCur & 15;
+                snprintf(t, sizeof(t), "%02X", hexBuf[hexCur]);
+                text(xh + c * 3 * cw, ry, 0.40f, C_DARK, t);
+                t[0] = as[c]; t[1] = 0;
+                text(xc + c * cw, ry, 0.40f, C_DARK, t);
+            }
+        }
+        if (hexN > 256) {
+            float th = 16 * 15, bhh = th * 16.0f / (float)((hexN + 15) / 16);
+            if (bhh < 6) bhh = 6;
+            rect(bx + bw - 14, by + 62, 4, th, C_CARD);
+            rect(bx + bw - 14, by + 62 + (th - bhh) * (float)hexTop / (float)(((hexN + 15) / 16) - 16), 4, bhh, C_ACC);
+        }
+        if (hexEditing) {
+            snprintf(ln, sizeof(ln), "Editando o byte %08lX: Cima/Baixo +-1   Esq/Dir +-16   X ok   O desfaz", (unsigned long)hexCur);
+            ctext(W / 2, by + bh - 44, 0.40f, C_GREEN, ln);
+        } else {
+            ctext(W / 2, by + bh - 44, 0.40f, C_MUTED, "Direcional move   L2/R2 pagina   X edita o byte");
+        }
+        ctext(W / 2, by + bh - 24, 0.42f, C_ACC2, "START gravar no Memory Card    O sair");
     } else if (tutOpen) {
         static const char *TT[TUT_PAGES] = { "BOTOES DO CONTROLE", "ATALHOS", "ABAS, FORMATOS E MENU START" };
         float bw = 580, bh = 392, bx = (W - bw) / 2, by = (H - bh) / 2, ly = by + 74;
@@ -1091,7 +1155,7 @@ static void render(void)
             tut_key(bx, ly, "SELECT", "Atualiza as listas do cartao e do USB");            ly += 30;
             tut_key(bx, ly, "START",  "Abre o menu de ferramentas");                       ly += 30;
             tut_key(bx, ly, "L3",     "Alterna a visao: grade de cards / lista");       ly += 30;
-            tut_key(bx, ly, "R3",     "Detalhes do save (arquivos e tamanhos)");
+            tut_key(bx, ly, "R3",     "Detalhes: exporta/importa arquivo e editor hex");
         } else {
             static const char *NM[13] = { "Verificar", "Apagar", "Copiar", "Icone", "Backup de tudo", "Recuperar cartao", "Formatar",
                                           "Organizar", "Detalhes", "Renomear", "Recuperar save", "Criar VMC", "Ajustes" };
@@ -1134,7 +1198,8 @@ static void render(void)
         for (k = 0; k < vis && dtScroll + k < dtN; k++) {
             const DFile *f = &dtF[dtScroll + k];
             float ry = by + 128 + k * 20;
-            if (k & 1) rect(bx + 20, ry - 2, bw - 40, 20, RGBA(255, 255, 255, 0x0E));
+            if (dtCan && dtScroll + k == dtSel) hgrad(bx + 20, ry - 2, bw - 40, 20, RGBA(0, 200, 255, 0x50), RGBA(150, 90, 255, 0x50));
+            else if (k & 1) rect(bx + 20, ry - 2, bw - 40, 20, RGBA(255, 255, 255, 0x0E));
             text(bx + 28, ry, 0.42f, C_TXT, f->name);
             fmt_size(sz, sizeof(sz), f->size);
             text(bx + bw - 28 - tw(sz, 0.42f), ry, 0.42f, C_MUTED, sz);
@@ -1143,7 +1208,7 @@ static void render(void)
             snprintf(ln, sizeof(ln), "%d-%d de %d arquivos", dtScroll + 1, dtScroll + vis < dtN ? dtScroll + vis : dtN, dtN);
             ctext(W / 2, by + bh - 44, 0.40f, C_MUTED, ln);
         }
-        ctext(W / 2, by + bh - 24, 0.42f, C_ACC2, "Cima/Baixo rolar    O fechar");
+        ctext(W / 2, by + bh - 24, 0.40f, C_ACC2, dtCan ? "X hex  Triangulo exportar  Quadrado importar  O fechar" : "Cima/Baixo rolar    O fechar");
     } else if (volEditing) {
         float bw = 500, bh = 236, bx = (W - bw) / 2, by = (H - bh) / 2;
         float sw = 38, gap = 4, sx = bx + (bw - (10 * sw + 9 * gap)) / 2, sy = by + 104;
@@ -2429,13 +2494,16 @@ static void show_details(int t)
     Entry *L = (t == TAB_MC) ? mcList : usbList;
     int N = (t == TAB_MC) ? mcCount : usbCount, isUsb = (t != TAB_MC), done = 0, i, n;
     Entry *e;
-    char sz[24], pat[64];
+    char sz[24], pat[64], sname[40];
+    int changed = 0;
 
     if (N <= 0 || cursorPos[t] < 0 || cursorPos[t] >= N) return;
     e = &L[cursorPos[t]];
     if (!e->titleDone) { e->titleDone = 1; title_load(isUsb, e); }
+    snprintf(sname, sizeof(sname), "%s", e->name);
 
-    dtN = 0; dtScroll = 0; dtNote[0] = 0;
+    dtN = 0; dtScroll = 0; dtSel = 0; dtNote[0] = 0;
+    dtCan = !isUsb;
     snprintf(dtTitle, sizeof(dtTitle), "%.46s", e->title[0] ? e->title : e->name);
     fmt_size(sz, sizeof(sz), e->size);
     snprintf(dtL[0], sizeof(dtL[0]), "Pasta: %s    %s: %s", e->name, e->kind == FMT_VMC ? "Cartao virtual" : "Formato", isUsb ? (e->kind == FMT_VMC ? e->stamp : FMT_NAME[e->kind]) : "Memory Card");
@@ -2489,12 +2557,42 @@ static void show_details(int t)
     while (!done) {
         read_pad();
         if (dtIcon) { icon_spin(); icon_render((Icon *)dtIcon, gCos, gSin); }
-        if ((pad_new & PAD_DOWN) && dtScroll + 10 < dtN) { dtScroll++; snd_play(SND_MOVE); }
-        if ((pad_new & PAD_UP) && dtScroll > 0)          { dtScroll--; snd_play(SND_MOVE); }
-        if (pad_new & (PAD_CIRCLE | PAD_CROSS)) { done = 1; snd_play(SND_BACK); }
+        if (dtCan && dtN > 0) {
+            if ((pad_new & PAD_DOWN) && dtSel < dtN - 1) { dtSel++; snd_play(SND_MOVE); }
+            if ((pad_new & PAD_UP) && dtSel > 0)         { dtSel--; snd_play(SND_MOVE); }
+            if (dtSel < dtScroll) dtScroll = dtSel;
+            if (dtSel >= dtScroll + 10) dtScroll = dtSel - 9;
+        } else {
+            if ((pad_new & PAD_DOWN) && dtScroll + 10 < dtN) { dtScroll++; snd_play(SND_MOVE); }
+            if ((pad_new & PAD_UP) && dtScroll > 0)          { dtScroll--; snd_play(SND_MOVE); }
+        }
+        if (dtCan) {
+            int reload = 0;
+            if ((pad_new & PAD_CROSS) && dtN > 0) {
+                DFile cf = dtF[dtSel];
+                hex_edit(sname, &cf);
+                reload = 1;
+            }
+            if ((pad_new & PAD_TRIANGLE) && dtN > 0) dt_export_file(sname, &dtF[dtSel]);
+            if (pad_new & PAD_SQUARE) { if (dt_import_file(sname)) reload = 1; }
+            if (reload) {                                  /* recarrega a lista de arquivos do save */
+                int i2, n2;
+                snprintf(pat, sizeof(pat), "/%s/*", sname);
+                n2 = mc_list(mcSlot, pat, subtbl, MAX_ENT);
+                dtN = 0;
+                for (i2 = 0; i2 < n2; i2++) {
+                    if (subtbl[i2].AttrFile & MC_ATTR_DIR) continue;
+                    dt_add((const char *)subtbl[i2].EntryName, subtbl[i2].FileSizeByte);
+                }
+                if (dtSel >= dtN) dtSel = dtN ? dtN - 1 : 0;
+                changed = 1;
+            }
+            if (pad_new & PAD_CIRCLE) { done = 1; snd_play(SND_BACK); }
+        } else if (pad_new & (PAD_CIRCLE | PAD_CROSS)) { done = 1; snd_play(SND_BACK); }
         render();
         present();
     }
+    if (changed) refresh_mc();
     dtOpen = 0;
     dtIcon = NULL;
 }
@@ -2719,6 +2817,193 @@ static int mem_to_mc(const u8 *src, u32 size, const char *dst, const char *label
     }
     mcClose(fd); mcSync(0, NULL, &r);
     return err;
+}
+
+/* ---------------- arquivos soltos e editor hex (tela de detalhes, Memory Card) ---------------- */
+#define HEX_MAXBYTES (1024u * 1024)
+
+static int dt_export_file(const char *save, const DFile *f)
+{
+    char src[96], dst[200], lbl[64];
+    u8 *buf;
+    int fd, ok;
+    if (!usb_ready()) { usbOk = 0; toast_s("Conecte um pendrive/HD USB", 1); return 0; }
+    if (f->size > 8u * 1024 * 1024) { toast_s("Arquivo grande demais para exportar", 1); return 0; }
+    buf = (u8 *)malloc(f->size ? f->size : 1);
+    if (!buf) { toast_s("Sem memoria", 1); return 0; }
+    snprintf(src, sizeof(src), "/%s/%s", save, f->name);
+    snprintf(lbl, sizeof(lbl), "%s", f->name);
+    g_done = 0; g_total = f->size ? f->size : 1;
+    if (f->size && mc_file_to_mem(src, buf, f->size, lbl) != 0) { free(buf); toast_s("Falha ao ler o arquivo", 1); return 0; }
+    mkdir(ROOT_DIR, 0777);
+    mkdir(ROOT_DIR "/arquivos", 0777);
+    snprintf(dst, sizeof(dst), ROOT_DIR "/arquivos/%s__%s", save, f->name);
+    fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    ok = (fd >= 0) && (f->size == 0 || wr_all(fd, buf, f->size) == 0);
+    if (fd >= 0) close(fd);
+    free(buf);
+    if (!ok) { unlink(dst); toast_s("Falha ao gravar no USB", 1); return 0; }
+    toast_s("Arquivo exportado: SaveManagerReis/arquivos", 0);
+    return 1;
+}
+
+static int dt_import_file(const char *save)
+{
+    static char names[19][40];
+    const char *it[20], *name;
+    char path[200], dst[96], m[100], pre[40];
+    DIR *d;
+    struct dirent *de;
+    struct stat st;
+    int n = 0, c, fd, rc, ok;
+
+    if (!usb_ready()) { usbOk = 0; toast_s("Conecte um pendrive/HD USB", 1); return 0; }
+    d = opendir(ROOT_DIR "/arquivos");
+    if (!d) { toast_s("Coloque o arquivo em SaveManagerReis/arquivos", 1); return 0; }
+    while ((de = readdir(d)) != NULL && n < 19) {
+        if (de->d_name[0] == '.' || strlen(de->d_name) > 38) continue;
+        snprintf(path, sizeof(path), ROOT_DIR "/arquivos/%s", de->d_name);
+        if (stat(path, &st) != 0 || S_ISDIR(st.st_mode)) continue;
+        snprintf(names[n], sizeof(names[n]), "%s", de->d_name);
+        it[n] = names[n];
+        n++;
+    }
+    closedir(d);
+    if (n == 0) { toast_s("Nenhum arquivo em SaveManagerReis/arquivos", 1); return 0; }
+    it[n] = "Cancelar";
+    c = menu_run("IMPORTAR ARQUIVO PARA O SAVE", it, n + 1);
+    if (c < 0 || c >= n) return 0;
+
+    name = names[c];
+    snprintf(pre, sizeof(pre), "%s__", save);              /* tira o prefixo "<SAVE>__" dos arquivos exportados */
+    if (!strncmp(name, pre, strlen(pre))) name += strlen(pre);
+    if (!safe_name(name)) { toast_s("Nome invalido (maximo 31 caracteres)", 1); return 0; }
+
+    snprintf(m, sizeof(m), "Gravar %s no save? Substitui se ja existir", name);
+    dtOpen = 0;
+    ok = confirm("IMPORTAR ARQUIVO", m);
+    dtOpen = 1;
+    if (!ok) return 0;
+
+    snprintf(path, sizeof(path), ROOT_DIR "/arquivos/%s", names[c]);
+    fd = open(path, O_RDONLY);
+    if (fd < 0 || stat(path, &st) != 0) { if (fd >= 0) close(fd); toast_s("Falha ao abrir o arquivo", 1); return 0; }
+    snprintf(dst, sizeof(dst), "/%s/%s", save, name);
+    g_done = 0; g_total = (u32)st.st_size ? (u32)st.st_size : 1;
+    rc = fd_to_mc(fd, (u32)st.st_size, dst, name);
+    close(fd);
+    if (rc != 0) { toast_s("Falha ao gravar (sem espaco ou erro de leitura)", 1); return 1; }
+    toast_s("Arquivo importado para o save", 0);
+    return 1;
+}
+
+static void hex_close(void)
+{
+    free(hexBuf); free(hexOrig);
+    hexBuf = hexOrig = NULL;
+    hexOpen = 0; hexEditing = 0; hexDirty = 0;
+}
+
+/* grava as alteracoes: copia do original no USB (so na 1a vez), grava e, se falhar, restaura */
+static int hex_save(void)
+{
+    char dst[96], bak[200], lbl[64];
+    struct stat st;
+    int ok;
+    hexOpen = 0;
+    ok = confirm("GRAVAR ALTERACOES?", usb_ready() ? "Uma copia do original fica no USB (arquivos)" : "ATENCAO: sem USB, nao havera copia do original");
+    hexOpen = 1;
+    if (!ok) return 0;
+    if (usb_ready()) {
+        snprintf(bak, sizeof(bak), ROOT_DIR "/arquivos/%s__%s.orig", hexSave, hexName);
+        if (stat(bak, &st) != 0) {
+            int fd;
+            mkdir(ROOT_DIR, 0777);
+            mkdir(ROOT_DIR "/arquivos", 0777);
+            fd = open(bak, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+            if (fd < 0 || wr_all(fd, hexOrig, hexN) != 0) {
+                if (fd >= 0) close(fd);
+                unlink(bak);
+                toast_s("Falha ao salvar a copia no USB: nada foi gravado", 1);
+                return 0;
+            }
+            close(fd);
+        }
+    }
+    snprintf(dst, sizeof(dst), "/%s/%s", hexSave, hexName);
+    snprintf(lbl, sizeof(lbl), "%s", hexName);
+    g_done = 0; g_total = hexN ? hexN : 1;
+    if (mem_to_mc(hexBuf, hexN, dst, lbl) != 0) {
+        g_done = 0;
+        mem_to_mc(hexOrig, hexN, dst, lbl);                 /* tenta restaurar o original */
+        toast_s("Falha ao gravar: original restaurado", 1);
+        return 0;
+    }
+    memcpy(hexOrig, hexBuf, hexN);
+    hexDirty = 0;
+    toast_s("Arquivo gravado no Memory Card", 0);
+    return 1;
+}
+
+static void hex_edit(const char *save, const DFile *f)
+{
+    char src[96], lbl[64];
+    int done = 0, wasDt;
+    if (f->size == 0) { toast_s("Arquivo vazio", 1); return; }
+    if (f->size > HEX_MAXBYTES) { toast_s("Arquivo grande demais para o editor (max 1 MB)", 1); return; }
+    hexBuf = (u8 *)malloc(f->size);
+    hexOrig = (u8 *)malloc(f->size);
+    if (!hexBuf || !hexOrig) { hex_close(); toast_s("Sem memoria", 1); return; }
+    snprintf(src, sizeof(src), "/%s/%s", save, f->name);
+    snprintf(lbl, sizeof(lbl), "%s", f->name);
+    g_done = 0; g_total = f->size;
+    if (mc_file_to_mem(src, hexBuf, f->size, lbl) != 0) { hex_close(); toast_s("Falha ao ler o arquivo", 1); return; }
+    memcpy(hexOrig, hexBuf, f->size);
+    hexN = f->size; hexCur = 0; hexTop = 0; hexEditing = 0; hexDirty = 0;
+    snprintf(hexName, sizeof(hexName), "%s", f->name);
+    snprintf(hexSave, sizeof(hexSave), "%s", save);
+    wasDt = dtOpen; dtOpen = 0;                              /* a tela de detalhes fica por baixo */
+    hexOpen = 1;
+    snd_play(SND_TAB);
+
+    while (!done) {
+        u32 row;
+        read_pad();
+        if (hexEditing) {
+            u8 *b = &hexBuf[hexCur];
+            if (pad_new & PAD_UP)    { (*b)++;      hexDirty = 1; }
+            if (pad_new & PAD_DOWN)  { (*b)--;      hexDirty = 1; }
+            if (pad_new & PAD_RIGHT) { *b += 16;    hexDirty = 1; }
+            if (pad_new & PAD_LEFT)  { *b -= 16;    hexDirty = 1; }
+            if (pad_new & PAD_CROSS)  { hexEditing = 0; hexDirty = memcmp(hexBuf, hexOrig, hexN) != 0; snd_play(SND_OK); }
+            if (pad_new & PAD_CIRCLE) { *b = hexSaved; hexEditing = 0; hexDirty = memcmp(hexBuf, hexOrig, hexN) != 0; snd_play(SND_BACK); }
+        } else {
+            if ((pad_new & PAD_RIGHT) && hexCur + 1 < hexN) { hexCur++; snd_play(SND_MOVE); }
+            if ((pad_new & PAD_LEFT) && hexCur > 0)         { hexCur--; snd_play(SND_MOVE); }
+            if ((pad_new & PAD_DOWN) && hexCur + 16 < hexN) { hexCur += 16; snd_play(SND_MOVE); }
+            if ((pad_new & PAD_UP) && hexCur >= 16)         { hexCur -= 16; snd_play(SND_MOVE); }
+            if (pad_new & PAD_R2) { hexCur = (hexCur + 256 < hexN) ? hexCur + 256 : hexN - 1; snd_play(SND_MOVE); }
+            if (pad_new & PAD_L2) { hexCur = (hexCur >= 256) ? hexCur - 256 : 0; snd_play(SND_MOVE); }
+            if (pad_new & PAD_CROSS) { hexSaved = hexBuf[hexCur]; hexEditing = 1; snd_play(SND_SELECT); }
+            if ((pad_new & PAD_START) && hexDirty) hex_save();
+            if (pad_new & PAD_CIRCLE) {
+                int ok = 1;
+                if (hexDirty) {
+                    hexOpen = 0;
+                    ok = confirm("SAIR SEM GRAVAR?", "As alteracoes feitas serao perdidas");
+                    hexOpen = 1;
+                }
+                if (ok) { done = 1; snd_play(SND_BACK); }
+            }
+        }
+        row = hexCur >> 4;
+        if (row < hexTop) hexTop = row;
+        if (row >= hexTop + 16) hexTop = row - 15;
+        render();
+        present();
+    }
+    hex_close();
+    dtOpen = wasDt;
 }
 
 static const sceMcTblGetDir *mc_raw(const char *name)
@@ -3656,6 +3941,68 @@ static u8 *ico_replace_tex(const u8 *d, int len, const u16 *tex, int *outLen)
     return o;
 }
 
+/* ---------------- CBS (CodeBreaker): exportar ---------------- */
+#define CBS_MAXBYTES (4u * 1024 * 1024)
+static int export_cbs(const Entry *e, const char *stamp)
+{
+    char d1[128], outp[200], src[96], lbl[96];
+    const sceMcTblGetDir *raw = mc_raw(e->name);
+    SvFile *sf;
+    u8 *out;
+    u32 total = 0, olen = 0;
+    int i, n, nf = 0, k = 0, fd, ok = 1;
+
+    snprintf(src, sizeof(src), "/%s/*", e->name);
+    n = mc_list(mcSlot, src, subtbl, MAX_ENT);
+    for (i = 0; i < n; i++) {
+        if (subtbl[i].AttrFile & MC_ATTR_DIR) continue;
+        total += subtbl[i].FileSizeByte;
+        nf++;
+    }
+    if (nf == 0 || total > CBS_MAXBYTES) return 1;
+    sf = (SvFile *)calloc((size_t)nf, sizeof(SvFile));
+    if (!sf) return 1;
+
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+    for (i = 0; i < n && ok; i++) {
+        const sceMcTblGetDir *t = &subtbl[i];
+        u32 sz;
+        u8 *buf;
+        if (t->AttrFile & MC_ATTR_DIR) continue;
+        sz = t->FileSizeByte;
+        buf = (u8 *)malloc(sz ? sz : 1);
+        if (!buf) { ok = 0; break; }
+        snprintf(src, sizeof(src), "/%s/%s", e->name, (const char *)t->EntryName);
+        if (sz && mc_file_to_mem(src, buf, sz, lbl) != 0) { free(buf); ok = 0; break; }
+        sf[k].name = (const char *)t->EntryName;
+        sf[k].data = buf;
+        sf[k].size = sz;
+        sf[k].cr = (const u8 *)&t->_Create;
+        sf[k].mo = (const u8 *)&t->_Modify;
+        k++;
+    }
+    out = NULL;
+    if (ok) {
+        out = sv_build_cbs(e->name, sf, k, raw ? (const u8 *)&raw->_Create : NULL, raw ? (const u8 *)&raw->_Modify : NULL, &olen);
+        if (!out) ok = 0;
+    }
+    for (i = 0; i < k; i++) free((void *)sf[i].data);
+    free(sf);
+    if (!ok) return 1;
+
+    snprintf(d1, sizeof(d1), ROOT_DIR "/%s", e->name);
+    snprintf(outp, sizeof(outp), "%s/%s.cbs", d1, stamp);
+    mkdir(ROOT_DIR, 0777);
+    mkdir(d1, 0777);
+    fd = open(outp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) { free(out); return 1; }
+    if (wr_all(fd, out, olen)) ok = 0;
+    close(fd);
+    free(out);
+    if (!ok) { unlink(outp); return 1; }
+    return 0;
+}
+
 /* ---------------- ZIP (so exportar) ----------------
  * ZIP padrao, sem compressao (metodo 0): abre em qualquer computador/celular. Cada arquivo do save
  * fica dentro de uma pasta com o nome do save: <PASTA>/<arquivo>. */
@@ -3746,6 +4093,7 @@ static int export_one(const Entry *e, const char *stamp)
     if (expFmt == FMT_PSU) return export_psu(e, stamp);
     if (expFmt == FMT_MAX) return export_max(e, stamp);
     if (expFmt == FMT_ZIP) return export_zip(e, stamp);
+    if (expFmt == FMT_CBS) return export_cbs(e, stamp);
     return export_folder(e, stamp);
 }
 
@@ -4475,7 +4823,7 @@ static void config_load_apply(int rebuild)
                 if (sscanf(p, "%31[a-z_]=%d", key, &val) == 2) {
                     if      (!strcmp(key, "sound"))          snd_set(val != 0);
                     else if (!strcmp(key, "sort")           && val >= 0 && val <= 3)       sortMode = val;
-                    else if (!strcmp(key, "export_format")  && ((val >= FMT_DIR && val <= FMT_MAX) || val == FMT_ZIP)) expFmt = val;
+                    else if (!strcmp(key, "export_format")  && ((val >= FMT_DIR && val <= FMT_CBS) || val == FMT_ZIP)) expFmt = val;
                     else if (!strcmp(key, "convert_format") && val >= FMT_DIR && val <= FMT_MAX) convFmt = val;
                     else if (!strcmp(key, "slot")           && val >= 0 && val < nCards)   mcSlot = val;
                     else if (!strcmp(key, "tab")            && val >= 0 && val <= 2)       tab = val;
@@ -5036,14 +5384,14 @@ static void do_mc_tools(void)
     else if (c == 2) tool_copy();
     else if (c == 3) tool_icon();
     else if (c == 4) {
-        const char *fm[4] = { "Pasta (arquivos soltos)", "PSU", "MAX (compactado)", "ZIP (abre no computador)" };
-        int f = menu_run("FORMATO DO BACKUP", fm, 4);
+        const char *fm[5] = { "Pasta (arquivos soltos)", "PSU", "MAX (compactado)", "CBS (CodeBreaker)", "ZIP (abre no computador)" };
+        int f = menu_run("FORMATO DO BACKUP", fm, 5);
         if (f >= 0) {
             int oldFmt = expFmt;
             clear_filters();                       /* backup de tudo: ignora filtro e busca */
             view_apply_all();
             mark_all_mc();
-            expFmt = (f == 3) ? FMT_ZIP : f;
+            expFmt = (f == 4) ? FMT_ZIP : f;
             do_export();
             expFmt = oldFmt;
         }

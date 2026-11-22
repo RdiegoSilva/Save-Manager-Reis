@@ -20,6 +20,11 @@ int sv_peek_sps(const uint8_t *h, uint32_t n, char *dirname, int max);
 int sv_parse_cbs(const uint8_t *in, uint32_t n, uint32_t max_out, char *dirname, sv_file_fn fn, void *ctx);
 int sv_parse_sps(const uint8_t *in, uint32_t n, char *dirname, sv_file_fn fn, void *ctx);
 
+/* gera um .cbs (CodeBreaker): zlib sem compactacao + RC4. cr/mo: datas de 8 bytes do PS2 (podem ser NULL).
+ * Devolve um buffer (malloc) com o arquivo pronto e o tamanho em *outLen, ou NULL se faltar memoria. */
+typedef struct { const char *name; const uint8_t *data; uint32_t size; const uint8_t *cr, *mo; } SvFile;
+uint8_t *sv_build_cbs(const char *dirname, const SvFile *f, int n, const uint8_t *dcr, const uint8_t *dmo, uint32_t *outLen);
+
 /* zlib (RFC 1950) -> out. retorna o tamanho gerado ou -1 */
 long sv_zlib_inflate(const uint8_t *in, uint32_t n, uint8_t *out, uint32_t cap);
 

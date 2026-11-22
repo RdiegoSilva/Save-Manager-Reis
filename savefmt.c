@@ -307,6 +307,62 @@ int sv_parse_cbs(const uint8_t *in, uint32_t n, uint32_t max_out, char *dirname,
     return rc;
 }
 
+/* ---------------- gerar CodeBreaker (.cbs) ---------------- */
+static void p32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
+
+uint8_t *sv_build_cbs(const char *dirname, const SvFile *f, int n, const uint8_t *dcr, const uint8_t *dmo, uint32_t *outLen)
+{
+    uint32_t dlen = 0, off = 0, zlen, nblk, i, a = 1, b = 0, pos;
+    uint8_t *dec, *out, *z;
+    int k;
+
+    for (k = 0; k < n; k++) dlen += 64 + f[k].size;
+    dec = (uint8_t *)calloc(dlen ? dlen : 1, 1);
+    if (!dec) return NULL;
+    for (k = 0; k < n; k++) {
+        uint8_t *h = dec + off;
+        if (f[k].cr) memcpy(h, f[k].cr, 8);
+        if (f[k].mo) memcpy(h + 8, f[k].mo, 8);
+        p32(h + 16, f[k].size);
+        h[20] = 0x97; h[21] = 0x84;                       /* modo 0x8497: arquivo */
+        strncpy((char *)h + 32, f[k].name, 31);
+        if (f[k].size) memcpy(h + 64, f[k].data, f[k].size);
+        off += 64 + f[k].size;
+    }
+
+    /* zlib com blocos "stored" (sem compactar) */
+    nblk = dlen ? (dlen + 65534) / 65535 : 1;
+    zlen = 2 + dlen + nblk * 5 + 4;
+    out = (uint8_t *)malloc(124 + zlen);
+    if (!out) { free(dec); return NULL; }
+    memset(out, 0, 124);
+    memcpy(out, "CFU\0", 4);
+    p32(out + 8, 124);                                    /* tamanho do cabecalho */
+    p32(out + 12, dlen);
+    p32(out + 16, zlen);                                  /* tamanho do corpo */
+    strncpy((char *)out + 20, dirname, 31);
+    if (dcr) memcpy(out + 52, dcr, 8);
+    if (dmo) memcpy(out + 60, dmo, 8);
+
+    z = out + 124;
+    z[0] = 0x78; z[1] = 0x01;
+    pos = 2;
+    for (i = 0, off = 0; i < nblk; i++) {
+        uint32_t len = dlen - off > 65535 ? 65535 : dlen - off;
+        z[pos++] = (i == nblk - 1) ? 1 : 0;
+        z[pos++] = (uint8_t)len; z[pos++] = (uint8_t)(len >> 8);
+        z[pos++] = (uint8_t)~len; z[pos++] = (uint8_t)(~len >> 8);
+        if (len) memcpy(z + pos, dec + off, len);
+        pos += len; off += len;
+    }
+    for (i = 0; i < dlen; i++) { a = (a + dec[i]) % 65521u; b = (b + a) % 65521u; }
+    z[pos++] = (uint8_t)(b >> 8); z[pos++] = (uint8_t)b; z[pos++] = (uint8_t)(a >> 8); z[pos++] = (uint8_t)a;
+    free(dec);
+    cbs_rc4(z, zlen);                                     /* RC4 e simetrico */
+    *outLen = 124 + zlen;
+    return out;
+}
+
 /* ---------------- SharkPort / X-Port (.sps / .xps) ---------------- */
 static const uint8_t SPS_MAGIC[17] = { 0x0D, 0, 0, 0, 'S','h','a','r','k','P','o','r','t','S','a','v','e' };
 

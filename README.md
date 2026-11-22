@@ -22,6 +22,7 @@ A logo (um Memory Card com uma coroa) aparece na tela de abertura e no cabeçalh
 - **Ordenar, filtrar e buscar** (START → Organizar): ordem por Nome, Data, Tamanho ou Região; filtro por região (US, EU, JP, KR, Outras, PS1); busca por nome da pasta ou do jogo. Com filtro ativo, o quadro de saves mostra `exibidos/total`.
 - **Tutorial** (START → Tutorial): tela de ajuda com 3 páginas explicando cada botão, atalho, aba, formato e item do menu.
 - **Detalhes do save** (R3): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um, com o **ícone do jogo** ao lado do título (o ícone 3D girando, quando o save tem; senão o ícone da região) (Memory Card, backups em Pasta e PSU).
+- **Arquivos soltos e editor hex** (R3 no Memory Card): na lista de arquivos do save, **Cima/Baixo** escolhe um arquivo, **Triângulo** exporta só ele para `mass:/SaveManagerReis/arquivos/`, **Quadrado** importa um arquivo dessa pasta para dentro do save (substitui se já existir) e **X** abre o **editor hex**. Veja a seção "Editor hex".
 - **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
 - **Cartões virtuais (VMC do OPL):** os saves de dentro dos arquivos `.bin` / `.ps2` / `.vmc` em `mass:/VMC/` aparecem na aba USB com a etiqueta **VMC**. Dá para importar para o Memory Card real e converter para Pasta, PSU ou MAX.
 - **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa), entram no backup e **podem ser restaurados** (a marca de save de PS1 é recriada; veja a seção abaixo).
@@ -55,12 +56,12 @@ nunca sobrescreve backups antigos (exceto dentro do mesmo segundo).
 | **Pasta** | padrão do Save Manager Reis | arquivos soltos, sem compactação |
 | **PSU** | EMS, uLaunchELF, mymc, PCSX2 | sem compactação, o mais compatível |
 | **MAX** | Action Replay MAX (`Ps2PowerSave`) | compactado (LZARI) + CRC32 |
+| **CBS** | CodeBreaker | importar, converter **e exportar** (sem compactação) |
 | **ZIP** | qualquer computador ou celular | só exportação: ZIP padrão, sem compactação, com os arquivos do save dentro de uma pasta |
 | **VMC** | cartão virtual do OPL (`mass:/VMC/*.bin`) | só leitura: importa e converte os saves de dentro |
-| **CBS** | CodeBreaker | só importação e conversão (compactado + criptografado) |
 | **SPS / XPS** | SharkPort / X-Port | só importação e conversão |
 
-- **Exportar:** na aba MEMORY CARD, **R2** troca o formato (Pasta → PSU → MAX → ZIP) e
+- **Exportar:** na aba MEMORY CARD, **R2** troca o formato (Pasta → PSU → MAX → CBS → ZIP) e
   **Triângulo** exporta nele.
 - **Importar:** na aba USB aparecem os backups em qualquer um dos formatos
   (a etiqueta PSU / MAX aparece no card). Para importar um save baixado da
@@ -105,7 +106,7 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Modo de vídeo:** veja a seção abaixo.
 - **Acertar data e hora** (dentro de Ajustes): edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
-- **Backup de tudo para USB:** pergunta o formato (Pasta, PSU, MAX ou ZIP) e exporta todos os saves nele.
+- **Backup de tudo para USB:** pergunta o formato (Pasta, PSU, MAX, CBS ou ZIP) e exporta todos os saves nele.
 - **Recuperar cartão ilegível / corrompido:** tenta ler o cartão 4 vezes. Se continuar ilegível, oferece formatar.
 - **Formatar Memory Card:** oferece backup em PSU no USB, pede confirmação duas vezes e então formata o slot atual.
 
@@ -246,3 +247,11 @@ Ao trocar, o app mostra "Manter este modo?" com contagem de 10 segundos: **X** m
 ## Configurações
 
 O app grava `mass:/SaveManagerReis/config.ini` sozinho, cerca de 1,5 segundo depois de você mudar algo, e lê o arquivo ao abrir (se o pendrive estiver conectado). Guarda: som, ordem da lista, formato de exportação, formato de conversão, slot do Memory Card, aba, modo de vídeo e visão (grade/lista). Filtro e busca **não** são guardados (para a lista não abrir "vazia"). Para voltar ao padrão, apague o arquivo.
+
+## Editor hex
+
+R3 em um save do Memory Card → escolha o arquivo → **X**. Mostra os bytes em hexadecimal e em texto (arquivos de até 1 MB). Direcional move o cursor, **L2/R2** pulam 256 bytes, **X** edita o byte (Cima/Baixo ±1, Esq/Dir ±16, **X** confirma, **O** desfaz), **START** grava no cartão e **O** sai (avisa se houver alterações). Antes da primeira gravação o app guarda o arquivo original no USB, em `SaveManagerReis/arquivos/<SAVE>__<arquivo>.orig`; se a gravação falhar, o original é restaurado. **Cuidado:** um byte errado pode corromper o save.
+
+## Exportar CBS
+
+O `.cbs` gerado não é compactado e é criptografado com a mesma chave do CodeBreaker. O app lê de volta os `.cbs` que ele mesmo gera; **ainda não foi testado no CodeBreaker nem em outras ferramentas.**
