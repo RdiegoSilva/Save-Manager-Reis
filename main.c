@@ -77,7 +77,7 @@ extern unsigned char musica_wav[];       extern unsigned int size_musica_wav;   
 #define FW            16.0f           /* largura de um caractere na escala 1.0 (Spacing 0.62) */
 
 enum { TAB_MC = 0, TAB_USB = 1, TAB_CONV = 2 };
-enum { FMT_DIR = 0, FMT_PSU = 1, FMT_MAX = 2, FMT_CBS = 3, FMT_SPS = 4, FMT_XPS = 5, FMT_VMC = 6 };   /* 3..6 so de entrada */
+enum { FMT_DIR = 0, FMT_PSU = 1, FMT_MAX = 2, FMT_CBS = 3, FMT_SPS = 4, FMT_XPS = 5, FMT_VMC = 6, FMT_ZIP = 7 };   /* 3..6 so de entrada; ZIP so de saida */
 #define MAX_ARCH      (24u * 1024 * 1024)   /* limite do arquivo descomprimido de um .max */
 
 /* ---------------- Cores ---------------- */
@@ -174,7 +174,9 @@ static char padbuf[256]               __attribute__((aligned(64)));
 
 static int quitReq = 0;
 static int expFmt = FMT_DIR, convFmt = FMT_PSU, mcRawN = 0, mcNoFmt = 0;
-static const char *FMT_NAME[] = { "Pasta", "PSU", "MAX", "CBS", "SPS", "XPS", "VMC" };
+static const char *FMT_NAME[] = { "Pasta", "PSU", "MAX", "CBS", "SPS", "XPS", "VMC", "ZIP" };
+/* proximo formato de exportacao no ciclo do R2: Pasta -> PSU -> MAX -> ZIP */
+static int next_exp_fmt(int f) { return f == FMT_DIR ? FMT_PSU : (f == FMT_PSU ? FMT_MAX : (f == FMT_MAX ? FMT_ZIP : FMT_DIR)); }
 
 static u32 g_done, g_total;
 static u32 pad_new, pad_old;
@@ -3654,11 +3656,96 @@ static u8 *ico_replace_tex(const u8 *d, int len, const u16 *tex, int *outLen)
     return o;
 }
 
+/* ---------------- ZIP (so exportar) ----------------
+ * ZIP padrao, sem compressao (metodo 0): abre em qualquer computador/celular. Cada arquivo do save
+ * fica dentro de uma pasta com o nome do save: <PASTA>/<arquivo>. */
+static void zp16(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); }
+static void zp32(u8 *p, u32 v) { p[0] = (u8)v; p[1] = (u8)(v >> 8); p[2] = (u8)(v >> 16); p[3] = (u8)(v >> 24); }
+
+static int export_zip(const Entry *e, const char *stamp)
+{
+    char d1[128], outp[200], src[96], lbl[96], nm[96];
+    u8 lh[30 + 96], *cd = NULL, *buf;
+    u32 cdCap, cdLen = 0, off = 0, nf = 0;
+    int i, n, fd, ok = 1;
+
+    snprintf(src, sizeof(src), "/%s/*", e->name);
+    n = mc_list(mcSlot, src, subtbl, MAX_ENT);
+    for (i = 0; i < n; i++) if (!(subtbl[i].AttrFile & MC_ATTR_DIR)) nf++;
+    if (nf == 0) return 1;
+    cdCap = (nf + 1) * (46 + 96) + 22;
+    cd = (u8 *)malloc(cdCap);
+    if (!cd) return 1;
+
+    snprintf(d1, sizeof(d1), ROOT_DIR "/%s", e->name);
+    snprintf(outp, sizeof(outp), "%s/%s.zip", d1, stamp);
+    mkdir(ROOT_DIR, 0777);
+    mkdir(d1, 0777);
+    fd = open(outp, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0) { free(cd); return 1; }
+
+    snprintf(lbl, sizeof(lbl), "%s", e->name);
+    for (i = 0; i < n && ok; i++) {
+        const sceMcTblGetDir *t = &subtbl[i];
+        u32 sz, crc, nl, dt, dd;
+        if (t->AttrFile & MC_ATTR_DIR) continue;
+        sz = t->FileSizeByte;
+        buf = (u8 *)malloc(sz ? sz : 1);
+        if (!buf) { ok = 0; break; }
+        snprintf(src, sizeof(src), "/%s/%s", e->name, (const char *)t->EntryName);
+        if (sz && mc_file_to_mem(src, buf, sz, lbl) != 0) { free(buf); ok = 0; break; }
+        crc = crc32_update(0, buf, sz);
+        snprintf(nm, sizeof(nm), "%s/%s", e->name, (const char *)t->EntryName);
+        nl = (u32)strlen(nm);
+        if (nl > 95) nl = 95;
+        {   /* data e hora do arquivo (DOS); fora do intervalo vira 01/01/1980 */
+            int yr = t->_Modify.Year, mo = t->_Modify.Month, dy = t->_Modify.Day;
+            if (yr < 1980 || yr > 2107 || mo < 1 || mo > 12 || dy < 1 || dy > 31) { yr = 1980; mo = 1; dy = 1; }
+            dd = ((u32)(yr - 1980) << 9) | ((u32)mo << 5) | (u32)dy;
+            dt = ((u32)(t->_Modify.Hour & 31) << 11) | ((u32)(t->_Modify.Min & 63) << 5) | (u32)((t->_Modify.Sec & 63) / 2);
+        }
+        memset(lh, 0, 30);
+        zp32(lh, 0x04034B50u); zp16(lh + 4, 20); zp16(lh + 6, 0); zp16(lh + 8, 0);
+        zp16(lh + 10, dt); zp16(lh + 12, dd);
+        zp32(lh + 14, crc); zp32(lh + 18, sz); zp32(lh + 22, sz);
+        zp16(lh + 26, nl); zp16(lh + 28, 0);
+        memcpy(lh + 30, nm, nl);
+        if (wr_all(fd, lh, 30 + nl) || (sz && wr_all(fd, buf, sz))) ok = 0;
+        free(buf);
+        if (!ok) break;
+        {   /* entrada do diretorio central */
+            u8 *c = cd + cdLen;
+            memset(c, 0, 46);
+            zp32(c, 0x02014B50u); zp16(c + 4, 20); zp16(c + 6, 20); zp16(c + 8, 0); zp16(c + 10, 0);
+            zp16(c + 12, dt); zp16(c + 14, dd);
+            zp32(c + 16, crc); zp32(c + 20, sz); zp32(c + 24, sz);
+            zp16(c + 28, nl);
+            zp32(c + 42, off);
+            memcpy(c + 46, nm, nl);
+            cdLen += 46 + nl;
+        }
+        off += 30 + nl + sz;
+    }
+    if (ok) {
+        u8 *c = cd + cdLen;
+        memset(c, 0, 22);
+        zp32(c, 0x06054B50u);
+        zp16(c + 8, nf); zp16(c + 10, nf);
+        zp32(c + 12, cdLen); zp32(c + 16, off);
+        if (wr_all(fd, cd, cdLen + 22)) ok = 0;
+    }
+    close(fd);
+    free(cd);
+    if (!ok) { unlink(outp); return 1; }
+    return 0;
+}
+
 /* despacho por formato */
 static int export_one(const Entry *e, const char *stamp)
 {
     if (expFmt == FMT_PSU) return export_psu(e, stamp);
     if (expFmt == FMT_MAX) return export_max(e, stamp);
+    if (expFmt == FMT_ZIP) return export_zip(e, stamp);
     return export_folder(e, stamp);
 }
 
@@ -4388,7 +4475,7 @@ static void config_load_apply(int rebuild)
                 if (sscanf(p, "%31[a-z_]=%d", key, &val) == 2) {
                     if      (!strcmp(key, "sound"))          snd_set(val != 0);
                     else if (!strcmp(key, "sort")           && val >= 0 && val <= 3)       sortMode = val;
-                    else if (!strcmp(key, "export_format")  && val >= FMT_DIR && val <= FMT_MAX) expFmt = val;
+                    else if (!strcmp(key, "export_format")  && ((val >= FMT_DIR && val <= FMT_MAX) || val == FMT_ZIP)) expFmt = val;
                     else if (!strcmp(key, "convert_format") && val >= FMT_DIR && val <= FMT_MAX) convFmt = val;
                     else if (!strcmp(key, "slot")           && val >= 0 && val < nCards)   mcSlot = val;
                     else if (!strcmp(key, "tab")            && val >= 0 && val <= 2)       tab = val;
@@ -4949,14 +5036,14 @@ static void do_mc_tools(void)
     else if (c == 2) tool_copy();
     else if (c == 3) tool_icon();
     else if (c == 4) {
-        const char *fm[3] = { "Pasta (arquivos soltos)", "PSU", "MAX (compactado)" };
-        int f = menu_run("FORMATO DO BACKUP", fm, 3);
+        const char *fm[4] = { "Pasta (arquivos soltos)", "PSU", "MAX (compactado)", "ZIP (abre no computador)" };
+        int f = menu_run("FORMATO DO BACKUP", fm, 4);
         if (f >= 0) {
             int oldFmt = expFmt;
             clear_filters();                       /* backup de tudo: ignora filtro e busca */
             view_apply_all();
             mark_all_mc();
-            expFmt = f;
+            expFmt = (f == 3) ? FMT_ZIP : f;
             do_export();
             expFmt = oldFmt;
         }
@@ -5166,7 +5253,7 @@ int main(int argc, char *argv[])
             ui.toastErr = 0; ui.toastT = 120;
         }
         if ((pad_new & PAD_R2) && tab == TAB_MC) {
-            expFmt = (expFmt + 1) % 3;
+            expFmt = next_exp_fmt(expFmt);
             snd_play(SND_SELECT);
             snprintf(ui.toast, sizeof(ui.toast), "Formato de exportacao: %s", FMT_NAME[expFmt]);
             ui.toastErr = 0; ui.toastT = 120;

@@ -55,11 +55,12 @@ nunca sobrescreve backups antigos (exceto dentro do mesmo segundo).
 | **Pasta** | padrão do Save Manager Reis | arquivos soltos, sem compactação |
 | **PSU** | EMS, uLaunchELF, mymc, PCSX2 | sem compactação, o mais compatível |
 | **MAX** | Action Replay MAX (`Ps2PowerSave`) | compactado (LZARI) + CRC32 |
+| **ZIP** | qualquer computador ou celular | só exportação: ZIP padrão, sem compactação, com os arquivos do save dentro de uma pasta |
 | **VMC** | cartão virtual do OPL (`mass:/VMC/*.bin`) | só leitura: importa e converte os saves de dentro |
 | **CBS** | CodeBreaker | só importação e conversão (compactado + criptografado) |
 | **SPS / XPS** | SharkPort / X-Port | só importação e conversão |
 
-- **Exportar:** na aba MEMORY CARD, **R2** troca o formato (Pasta → PSU → MAX) e
+- **Exportar:** na aba MEMORY CARD, **R2** troca o formato (Pasta → PSU → MAX → ZIP) e
   **Triângulo** exporta nele.
 - **Importar:** na aba USB aparecem os backups em qualquer um dos formatos
   (a etiqueta PSU / MAX aparece no card). Para importar um save baixado da
@@ -104,7 +105,7 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Modo de vídeo:** veja a seção abaixo.
 - **Acertar data e hora** (dentro de Ajustes): edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
-- **Backup de tudo para USB:** pergunta o formato (Pasta, PSU ou MAX) e exporta todos os saves nele.
+- **Backup de tudo para USB:** pergunta o formato (Pasta, PSU, MAX ou ZIP) e exporta todos os saves nele.
 - **Recuperar cartão ilegível / corrompido:** tenta ler o cartão 4 vezes. Se continuar ilegível, oferece formatar.
 - **Formatar Memory Card:** oferece backup em PSU no USB, pede confirmação duas vezes e então formata o slot atual.
 
