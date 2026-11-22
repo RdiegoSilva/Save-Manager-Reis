@@ -112,6 +112,7 @@ typedef struct {
     char title[36];    /* nome do jogo (titulo do icon.sys), ou vazio */
     u8   titleDone;    /* ja tentou ler o titulo                 */
     u8   ps1;          /* save de PlayStation 1                  */
+    u8   sizeDone;     /* Memory Card: tamanho ja calculado (calculo em segundo plano) */
 } Entry;
 
 typedef struct {
@@ -529,6 +530,7 @@ static const Icon *slotOwner[ICON_SLOTS];
 static u32       slotVer[ICON_SLOTS];
 
 static void icon_free_all(int t);
+static void sync_back(Entry *full, int fn, const Entry *view, int vn);
 
 static void icon_slots_init(void)
 {
@@ -678,7 +680,7 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     }
 
     /* tamanho / data / hora */
-    fmt_size(buf, sizeof(buf), e->size);
+    if (!isUsb && !e->sizeDone) snprintf(buf, sizeof(buf), "..."); else fmt_size(buf, sizeof(buf), e->size);
     text_sh(x + 58, y + 10, 0.50f, C_ACC, buf);
     text(x + 58, y + 26, 0.45f, C_TXT, e->date);
     text(x + 58, y + 40, 0.45f, C_MUTED, e->time);
@@ -743,7 +745,7 @@ static void draw_row(float x, float y, float w, float h, const Entry *e, int isC
         float dateR, sizeR, fmtR, chipX;
         row_geom(x, w, &dateR, &sizeR, &fmtR, &chipX);
         snprintf(dt, sizeof(dt), "%s %s", e->date, e->time);
-        fmt_size(sz, sizeof(sz), e->size);
+        if (!isUsb && !e->sizeDone) snprintf(sz, sizeof(sz), "..."); else fmt_size(sz, sizeof(sz), e->size);
         text(dateR - tw(dt, 0.42f), y + 8, 0.42f, C_MUTED, dt);
         text(sizeR - tw(sz, 0.46f), y + 8, 0.46f, C_ACC, sz);
         if (isUsb && e->kind != FMT_DIR) {
@@ -1484,9 +1486,57 @@ static void view_build(const Entry *full, int fn, Entry *out, int *on)
     *on = n;
 }
 
+/* ---- tamanho dos saves do Memory Card: calculado 1 por vez, fora do caminho da troca de slot ---- */
+static int mcsize_one(int fi)
+{
+    char pat[64];
+    int j, m;
+    u32 sz = 0;
+    Entry *f = &mcFull[fi];
+    snprintf(pat, sizeof(pat), "/%s/*", f->name);
+    m = mc_list(mcSlot, pat, subtbl, MAX_ENT);
+    for (j = 0; j < m; j++)
+        if (!(subtbl[j].AttrFile & MC_ATTR_DIR)) sz += subtbl[j].FileSizeByte;
+    f->size = sz; f->sizeDone = 1;
+    for (j = 0; j < mcCount; j++)                          /* o mesmo save na vista atual (filtrada / ordenada) */
+        if (!strcmp(mcList[j].name, f->name)) { mcList[j].size = sz; mcList[j].sizeDone = 1; break; }
+    return 1;
+}
+
+static void mcsize_resort(void)                            /* ordenando por tamanho: reordena quando tudo estiver pronto */
+{
+    char cur[40];
+    int i;
+    if (sortMode != 2 || mcCount == 0) return;
+    snprintf(cur, sizeof(cur), "%s", mcList[cursorPos[TAB_MC] < mcCount ? cursorPos[TAB_MC] : 0].name);
+    sync_back(mcFull, mcFullN, mcList, mcCount);
+    view_build(mcFull, mcFullN, mcList, &mcCount);
+    for (i = 0; i < mcCount; i++) if (!strcmp(mcList[i].name, cur)) { cursorPos[TAB_MC] = i; break; }
+    icon_free_all(TAB_MC);
+}
+
+static void mcsize_pump(void)                              /* 1 save por chamada */
+{
+    int i, left = 0, did = 0;
+    for (i = 0; i < mcFullN; i++) {
+        if (mcFull[i].sizeDone) continue;
+        if (!did) { mcsize_one(i); did = 1; }
+        else left = 1;
+    }
+    if (did && !left) mcsize_resort();
+}
+
+static void mcsize_all(void)                               /* antes de exportar, copiar, ver detalhes...: precisa de todos */
+{
+    int i, any = 0;
+    for (i = 0; i < mcFullN; i++) if (!mcFull[i].sizeDone) { mcsize_one(i); any = 1; }
+    if (any) mcsize_resort();
+}
+
+
 static void refresh_mc(void)
 {
-    int i, j, n, m;
+    int i, n;
     mcCount = 0;
     mcFullN = 0;
     cursorPos[TAB_MC] = 0; topRow[TAB_MC] = 0;
@@ -1498,7 +1548,6 @@ static void refresh_mc(void)
     for (i = 0; i < n && mcCount < MAX_ENT; i++) {
         sceMcTblGetDir *t = &mctbl[i];
         Entry *e;
-        char pat[64];
         if (!(t->AttrFile & MC_ATTR_DIR)) continue;
         if (t->EntryName[0] == '.') continue;
         e = &mcList[mcCount++];
@@ -1513,10 +1562,7 @@ static void refresh_mc(void)
             snprintf(e->date, sizeof(e->date), "%02d/%02d/%02d", mt.d, mt.mo, mt.y % 100);
             snprintf(e->time, sizeof(e->time), "%02d:%02d", mt.h, mt.mi);
         }
-        snprintf(pat, sizeof(pat), "/%s/*", e->name);
-        m = mc_list(mcSlot, pat, subtbl, MAX_ENT);
-        for (j = 0; j < m; j++)
-            if (!(subtbl[j].AttrFile & MC_ATTR_DIR)) e->size += subtbl[j].FileSizeByte;
+        e->sizeDone = 0;                                   /* o tamanho e calculado aos poucos, depois (mcsize_pump) */
     }
     memcpy(mcFull, mcList, (size_t)mcCount * sizeof(Entry));
     mcFullN = mcCount;
@@ -2498,6 +2544,7 @@ static void show_details(int t)
     int changed = 0;
 
     if (N <= 0 || cursorPos[t] < 0 || cursorPos[t] >= N) return;
+    if (t == TAB_MC) mcsize_all();
     e = &L[cursorPos[t]];
     if (!e->titleDone) { e->titleDone = 1; title_load(isUsb, e); }
     snprintf(sname, sizeof(sname), "%s", e->name);
@@ -3786,6 +3833,7 @@ static int mc_verify(void)
 }
 
 /* apaga uma pasta de save (arquivos e depois a pasta). retorna numero de falhas */
+static u32 delBase = 0, delSpan = 0;                     /* progresso do apagar (0 = sem barra) */
 static int mc_delete_save(const char *name)
 {
     char pat[64], path[96];
@@ -3798,6 +3846,7 @@ static int mc_delete_save(const char *name)
         mcDelete(MP(mcSlot), MS(mcSlot), path);
         mcSync(0, NULL, &r);
         if (r < 0) fails++;
+        if (delSpan) { g_done = delBase + delSpan * (u32)(j + 1) / (u32)(n + 1); progress(name, g_done, g_total); }
     }
     snprintf(path, sizeof(path), "/%s", name);
     mcDelete(MP(mcSlot), MS(mcSlot), path);
@@ -4116,6 +4165,7 @@ static int import_one(const Entry *e)
 static int gather(Entry *L, int N, int *idx)
 {
     int i, k = 0;
+    if (L == mcList) mcsize_all();                       /* acoes precisam dos tamanhos */
     for (i = 0; i < N; i++) if (L[i].sel) idx[k++] = i;
     if (k == 0 && N > 0) idx[k++] = cursorPos[tab];     /* sem marcados: usa o card atual */
     return k;
@@ -4171,6 +4221,7 @@ static int mc_has(const char *name)
 static Entry *mc_find(const char *name)
 {
     int i;
+    mcsize_all();                                          /* o aviso de sobrescrever compara tamanhos */
     for (i = 0; i < mcFullN; i++) if (!strcmp(mcFull[i].name, name)) return &mcFull[i];
     return NULL;
 }
@@ -4413,7 +4464,11 @@ static void tool_delete(void)
     {
         char names[MAX_ENT][40];
         for (i = 0; i < k; i++) snprintf(names[i], sizeof(names[0]), "%s", mcList[idx[i]].name);
-        for (i = 0; i < k; i++) fails += mc_delete_save(names[i]);
+        snprintf(ui.title, sizeof(ui.title), "APAGANDO");
+        g_total = (u32)k * 1000; g_done = 0; g_multi = 0; delSpan = 1000;
+        ui.busy = 1;
+        for (i = 0; i < k; i++) { delBase = (u32)i * 1000; fails += mc_delete_save(names[i]); }
+        ui.busy = 0; delSpan = 0;
     }
     for (i = 0; i < mcCount; i++) mcList[i].sel = 0;
     refresh_mc();
@@ -5613,7 +5668,7 @@ int main(int argc, char *argv[])
             int NN = (tab == TAB_MC) ? mcCount : usbCount;
             if (NN > 0) {
                 int ci = cursorPos[tab];
-                icon_pump(tab, LL, NN);
+                if ((frameNo & 1) == 0) icon_pump(tab, LL, NN);        /* 1 icone a cada 2 quadros: sem travadas */
                 if (spinTab != tab || spinIdx != ci) {            /* cursor mudou: volta o anterior ao angulo fixo */
                     if (spinTab >= 0 && spinIdx >= 0 && spinIdx < MAX_ENT && icons[spinTab][spinIdx])
                         icon_render(icons[spinTab][spinIdx], ICON_CA0, ICON_SA0);
@@ -5626,7 +5681,8 @@ int main(int argc, char *argv[])
         {
             Entry *LT = (tab == TAB_MC) ? mcList : usbList;
             int NT = (tab == TAB_MC) ? mcCount : usbCount;
-            if (NT > 0) title_pump(tab, LT, NT);
+            if (NT > 0 && (frameNo & 1) == 1) title_pump(tab, LT, NT);
+            if (tab == TAB_MC && (frameNo & 3) == 3) mcsize_pump();
         }
 
         if (ui.toastT > 0) ui.toastT--;
