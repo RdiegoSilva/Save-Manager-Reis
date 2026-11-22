@@ -13,7 +13,7 @@ void snd_update(void);        /* chame uma vez por quadro (mistura musica + efei
 void snd_set(int on);         /* liga/desliga os EFEITOS */
 int  snd_enabled(void);
 
-/* musica de fundo: WAV PCM 16 bits, mono ou estereo, qualquer taxa. Pode vir embutida no ELF
+/* musica de fundo: WAV PCM de 8 ou 16 bits, mono ou estereo, qualquer taxa. Pode vir embutida no ELF
  * (musica.wav na pasta do projeto) ou de mass:/SaveManagerReis/musica.wav (esta substitui a embutida). */
 int  snd_music_embed(const unsigned char *wav, unsigned size);   /* WAV embutido no ELF (sem copiar): 0 = ok, -2 = invalido */
 int  snd_music_load(const char *path);   /* 0 = ok, -1 = sem arquivo, -2 = formato invalido, -3 = grande demais / sem memoria */

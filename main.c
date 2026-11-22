@@ -4154,7 +4154,7 @@ static void music_try_load(void)
     if (musTried || !usb_ready()) return;
     musTried = 1;
     r = snd_music_load(MUSIC_PATH);
-    if (r == -2)      toast_s("musica.wav invalida: use WAV de 16 bits (mono ou estereo)", 1);
+    if (r == -2)      toast_s("musica.wav invalida: use WAV PCM de 8 ou 16 bits", 1);
     else if (r == -3) toast_s("musica.wav grande demais (maximo 14 MB): converta p/ 22 kHz", 1);
 }
 
@@ -4802,7 +4802,8 @@ static void init_iop(void)
     padPortOpen(0, 0, padbuf);
     snd_init();
 #ifdef EMBED_MUSIC
-    snd_music_embed(musica_wav, size_musica_wav);          /* toca desde o inicio, sem precisar do pendrive */
+    if (snd_music_embed(musica_wav, size_musica_wav) != 0)   /* toca desde o inicio, sem precisar do pendrive */
+        toast_s("Musica embutida invalida: use WAV PCM de 8 ou 16 bits", 1);
 #endif
 }
 

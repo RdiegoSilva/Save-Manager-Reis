@@ -1,6 +1,6 @@
 /*
  * sound.c - efeitos (ondas senoidais com envelope, sintetizadas na inicializacao) e musica de fundo
- * (WAV em loop), misturados num unico fluxo e enviados ao audsrv.
+ * (WAV de 8 ou 16 bits em loop), misturados num unico fluxo e enviados ao audsrv.
  *
  * Como funciona:
  *  - Formato de saida fixo: 22050 Hz, estereo, 16 bits. A cada quadro, snd_update() mistura musica e
@@ -38,7 +38,9 @@ static const int prio[SND_COUNT] = { 0, 0, 0, 1, 1, 2, 2, 2 };
 /* musica */
 static unsigned char *mus = NULL;               /* PCM 16 bits little-endian (heap ou embutido no ELF) */
 static int    musHeap = 0;                     /* 1 = mus veio de malloc (pode dar free) */
-#define S16(i) ((short)(mus[(i) * 2] | (mus[(i) * 2 + 1] << 8)))
+static int    musBits = 16;                    /* 8 (sem sinal) ou 16 (com sinal) */
+/* amostra numero i (intercalada por canal) como 16 bits com sinal */
+#define S16(i) (musBits == 16 ? (int)(short)(mus[(i) * 2] | (mus[(i) * 2 + 1] << 8)) : (((int)mus[(i)] - 128) << 8))
 static int    musFrames = 0, musCh = 2, musRate = 44100;
 static int    musIdx = 0;
 static unsigned musFrac = 0, musStep = 65536;  /* posicao 16.16 e passo por quadro de saida */
@@ -226,19 +228,19 @@ static unsigned rd32(const unsigned char *p) { return p[0] | (p[1] << 8) | (p[2]
 static unsigned rd16(const unsigned char *p) { return p[0] | (p[1] << 8); }
 
 /* troca a musica atual (libera a anterior se estava no heap) */
-static void music_use(unsigned char *p, int heap, int ch, unsigned rate, unsigned dataLen)
+static void music_use(unsigned char *p, int heap, int ch, int bits, unsigned rate, unsigned dataLen)
 {
     musFrames = 0;                                       /* para o mixer antes de trocar o buffer */
     if (mus && musHeap) free(mus);
     mus = p; musHeap = heap;
-    musCh = ch; musRate = (int)rate;
-    musFrames = (int)(dataLen / (unsigned)(2 * ch));
+    musCh = ch; musRate = (int)rate; musBits = bits;
+    musFrames = (int)(dataLen / (unsigned)((bits / 8) * ch));
     musIdx = 0; musFrac = 0;
     musStep = (unsigned)(((unsigned long long)rate << 16) / OUT_RATE);
     if (musStep == 0) musStep = 1;
 }
 
-/* musica embutida no ELF (nao copia): WAV PCM 16 bits. 0 = ok, -2 = formato invalido */
+/* musica embutida no ELF (nao copia): WAV PCM 8 ou 16 bits. 0 = ok, -2 = formato invalido */
 int snd_music_embed(const unsigned char *d, unsigned size)
 {
     unsigned pos = 12, dataOff = 0, dataLen = 0, rate = 0;
@@ -261,9 +263,9 @@ int snd_music_embed(const unsigned char *d, unsigned size)
         if (csz > size) break;
         pos += 8 + csz + (csz & 1);
     }
-    if (!gotFmt || (tag != 1 && tag != 0xFFFE) || bits != 16 || (ch != 1 && ch != 2) || rate < 8000 || rate > 96000 || dataLen < 4) return -2;
-    dataLen -= dataLen % (unsigned)(2 * ch);
-    music_use((unsigned char *)d + dataOff, 0, ch, rate, dataLen);
+    if (!gotFmt || (tag != 1 && tag != 0xFFFE) || (bits != 16 && bits != 8) || (ch != 1 && ch != 2) || rate < 8000 || rate > 96000 || dataLen < 4) return -2;
+    dataLen -= dataLen % (unsigned)((bits / 8) * ch);
+    music_use((unsigned char *)d + dataOff, 0, ch, bits, rate, dataLen);
     return 0;
 }
 
@@ -301,12 +303,12 @@ int snd_music_load(const char *path)
         }
         pos += 8 + (off_t)csz + (off_t)(csz & 1);
     }
-    if (!gotFmt || (tag != 1 && tag != 0xFFFE) || bits != 16 || (ch != 1 && ch != 2) || rate < 8000 || rate > 96000 || dataLen < 4) {
+    if (!gotFmt || (tag != 1 && tag != 0xFFFE) || (bits != 16 && bits != 8) || (ch != 1 && ch != 2) || rate < 8000 || rate > 96000 || dataLen < 4) {
         close(fd);
         return -2;
     }
     if (dataLen > MUSIC_MAX_BYTES) { close(fd); return -3; }
-    dataLen -= dataLen % (unsigned)(2 * ch);
+    dataLen -= dataLen % (unsigned)((bits / 8) * ch);
 
     p = (unsigned char *)malloc(dataLen);
     if (!p) { close(fd); return -3; }
@@ -322,7 +324,7 @@ int snd_music_load(const char *path)
     }
     close(fd);
     if (got < dataLen) { free(p); return -2; }
-    music_use(p, 1, ch, rate, dataLen);
+    music_use(p, 1, ch, bits, rate, dataLen);
     return 0;
 }
 
