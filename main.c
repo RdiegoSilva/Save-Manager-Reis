@@ -444,7 +444,7 @@ static float key_pill(float x, float y, const char *keys, const char *label)
     rect(x, y, w, 18, C_CARD);
     text(x + 6, y + 4, 0.38f, C_ACC, keys);
     text(x + w + 6, y + 3, 0.45f, C_TXT, label);
-    return x + w + 6 + tw(label, 0.45f) + 18;
+    return x + w + 6 + tw(label, 0.45f) + 14;
 }
 
 /* linha do tutorial: tecla em "pilula" na coluna da esquerda e a explicacao a partir de bx+120 */
@@ -928,12 +928,12 @@ static void render(void)
     x = key_pill(x, H - 30, "L1/R1", "Abas");
     if (tab == TAB_MC) {
         char fl[32];
-        snprintf(fl, sizeof(fl), "Formato: %s", FMT_NAME[expFmt]);
+        snprintf(fl, sizeof(fl), "Fmt: %s", FMT_NAME[expFmt]);
         x = key_pill(x, H - 30, "R2", fl);
     }
     x = key_pill(x, H - 30, "L3", listMode ? "Grade" : "Lista");
     x = key_pill(x, H - 30, "L2", "Slot");
-    x = key_pill(x, H - 30, "SELECT", "Atualizar");
+    x = key_pill(x, H - 30, "SELECT", "Reler");
     if (tab == TAB_CONV) {
         char fl[32];
         snprintf(fl, sizeof(fl), "Destino: %s", FMT_NAME[convFmt]);
@@ -4767,7 +4767,7 @@ static void show_tutorial(void)
 static void show_credits(void)
 {
     snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
-    snprintf(ui.extra[1], sizeof(ui.extra[1]), "Criado por Diego Reis");
+    snprintf(ui.extra[1], sizeof(ui.extra[1]), "Desenvolvido por Diego Reis");
     ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
     snprintf(ui.extra[2], sizeof(ui.extra[2]), "Musica: HilalDeep - All for Music (Original Mix)");
     ui.extraCol[2] = C_TXT;
@@ -4840,7 +4840,7 @@ static void tool_settings(void)
 
 static void do_mc_tools(void)
 {
-    const char *items[15] = {
+    const char *items[16] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -4855,10 +4855,11 @@ static void do_mc_tools(void)
         "Criar cartao virtual novo (VMC)",
         "Ajustes (som, musica, video, data e hora, creditos)",
         "Sair do aplicativo",
-        "Tutorial: o que cada botao faz"
+        "Tutorial: o que cada botao faz",
+        "Creditos"
     };
     int c;
-    c = menu_run("FERRAMENTAS", items, 15);
+    c = menu_run("FERRAMENTAS", items, 16);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) { tool_view(); return; }
     if (c == 8) { show_details(tab); return; }
@@ -4867,6 +4868,7 @@ static void do_mc_tools(void)
     if (c == 9) { tool_rename(); return; }
     if (c == 12) { tool_settings(); return; }
     if (c == 14) { show_tutorial(); return; }
+    if (c == 15) { show_credits(); return; }
     if (c == 13) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) { config_flush(); quitReq = 1; }
         return;
