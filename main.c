@@ -546,20 +546,62 @@ static void fmt_cnt(char *b, int shown, int total)
     else                snprintf(b, 32, "%d", shown);
 }
 
+/* ---- acabamento visual: sombras suaves, texto com sombra, paineis com degrade e cantos cortados, janelas ---- */
+static void soft_shadow(float x, float y, float w, float h)
+{
+    rect(x + 2, y + 3, w, h, RGBA(0, 0, 0, 0x2A));
+    rect(x + 4, y + 6, w, h, RGBA(0, 0, 0, 0x16));
+}
+
+static void text_sh(float x, float y, float scale, u64 col, const char *s)
+{
+    text(x + 1, y + 1, scale, RGBA(0, 0, 0, 0x70), s);
+    text(x, y, scale, col, s);
+}
+
+/* painel com degrade vertical e cantos "chanfrados" (cantos arredondados baratos para o GS) */
+static void panel(float x, float y, float w, float h, u64 c1, u64 c2)
+{
+    rect(x + 3, y, w - 6, 3, c1);
+    rect(x + 1, y + 1, 2, 2, c1);
+    vgrad(x, y + 3, w, h - 6, c1, c2);
+    rect(x + 3, y + h - 3, w - 6, 3, c2);
+    rect(x + 1, y + h - 3, 2, 2, c2);
+}
+
+/* janela modal: escurece o fundo, sombra, corpo em degrade, borda fina e barra de acento com brilho */
+static void window(float x, float y, float w, float h)
+{
+    u64 edge = RGBA(90, 100, 190, 0x60);
+    rect(0, 0, (float)gsGlobal->Width, (float)gsGlobal->Height, C_DIM);
+    soft_shadow(x, y, w, h);
+    vgrad(x, y, w, h, RGBA(32, 36, 76, 0x80), RGBA(19, 22, 48, 0x80));
+    rect(x, y + 4, 1, h - 4, edge);
+    rect(x + w - 1, y + 4, 1, h - 4, edge);
+    rect(x, y + h - 1, w, 1, edge);
+    hgrad(x, y, w, 4, C_ACC, C_ACC2);
+    vgrad(x, y + 4, w, 22, RGBA(0, 160, 255, 0x1E), RGBA(0, 160, 255, 0x00));
+}
+
 static void draw_card(float x, float y, float w, float h, const Entry *e, int isCur, int isUsb, const Icon *ic, int slot)
 {
     char buf[48];
     int r = ent_region(e);
 
-    rect(x + 3, y + 4, w, h, C_SHADOW);
+    soft_shadow(x, y, w, h);
     if (isCur) {
-        int p = (int)(frameNo % 60), a = p < 30 ? p : 60 - p;
+        int p = (int)(frameNo % 60), a = p < 30 ? p : 60 - p, k;
+        for (k = 4; k >= 1; k--)                           /* brilho pulsante em volta do card selecionado */
+            rect(x - 3 - k * 2, y - 3 - k * 2, w + 6 + k * 4, h + 6 + k * 4, RGBA(0, 170, 255, (u8)((5 + (5 - k) * 4) * (60 + a) / 90)));
         rect(x - 3, y - 3, w + 6, h + 6, RGBA(0, 140 + a * 4, 255, 0x80));
     }
-    rect(x, y, w, h, e->sel ? C_CARD_S : C_CARD);
-    rect(x, y, w, 3, isUsb ? C_ACC2 : reg_col(r));
+    panel(x, y, w, h, e->sel ? RGBA(32, 96, 116, 0x80) : RGBA(41, 46, 88, 0x80),
+                      e->sel ? RGBA(22, 66, 84, 0x80)  : RGBA(26, 29, 59, 0x80));
+    rect(x + 2, y, w - 4, 3, isUsb ? C_ACC2 : reg_col(r));
+    rect(x + 4, y + 3, w - 8, 1, RGBA(255, 255, 255, 0x18));        /* reflexo fino no topo do card */
 
     /* icone original do save (3D) ou, se nao houver, o icone da regiao */
+    rect(x + 6, y + 9, 46, 46, RGBA(0, 0, 0, 0x3C));                  /* moldura do icone */
     if (ic) {
         draw_icon(slot, ic, x + 7, y + 10, 44);
     } else {
@@ -570,7 +612,7 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
 
     /* tamanho / data / hora */
     fmt_size(buf, sizeof(buf), e->size);
-    text(x + 58, y + 10, 0.50f, C_ACC, buf);
+    text_sh(x + 58, y + 10, 0.50f, C_ACC, buf);
     text(x + 58, y + 26, 0.45f, C_TXT, e->date);
     text(x + 58, y + 40, 0.45f, C_MUTED, e->time);
     if (isUsb && e->kind != FMT_DIR) {
@@ -581,12 +623,12 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     /* nome */
     if (e->title[0]) {                        /* nome do jogo em cima, pasta embaixo */
         fit(buf, e->title, w - 16, 0.40f);
-        text(x + 8, y + 54, 0.40f, C_TXT, buf);
+        text_sh(x + 8, y + 54, 0.40f, C_TXT, buf);
         fit(buf, e->name, w - 16, 0.32f);
         text(x + 8, y + 67, 0.32f, C_MUTED, buf);
     } else {
         fit(buf, e->name, w - 16, 0.50f);
-        text(x + 8, y + 58, 0.50f, C_TXT, buf);
+        text_sh(x + 8, y + 58, 0.50f, C_TXT, buf);
     }
 
     if (e->sel) {
@@ -609,13 +651,17 @@ static void render(void)
 
     gsKit_clear(gsGlobal, RGBA(7, 8, 20, 0x80));
     vgrad(0, 0, W, H, C_BG_T, C_BG_B);
+    hgrad(W * 0.45f, 60, W * 0.55f, H - 120, RGBA(100, 60, 220, 0x00), RGBA(100, 60, 220, 0x18));   /* brilho roxo a direita */
+    hgrad(0, 60, W * 0.55f, H - 120, RGBA(0, 130, 230, 0x14), RGBA(0, 130, 230, 0x00));            /* brilho azul a esquerda */
 
     /* ---- cabecalho ---- */
-    rect(0, 0, W, 54, C_BAR);
+    vgrad(0, 0, W, 54, RGBA(36, 40, 84, 0x80), RGBA(20, 22, 48, 0x80));
     hgrad(0, 54, W, 3, C_ACC, C_ACC2);
+    vgrad(0, 57, W, 12, RGBA(100, 80, 255, 0x26), RGBA(100, 80, 255, 0x00));
+    rect(M - 2, 8, 38, 38, RGBA(0, 170, 255, 0x26));
     hgrad(M, 10, 34, 34, C_ACC, C_ACC2);
     ctext(M + 17, 16, 0.9f, C_TXT, "R");
-    text(M + 46, 7, 0.78f, C_TXT, APP_NAME);
+    text_sh(M + 46, 7, 0.78f, C_TXT, APP_NAME);
     text(M + 48, 33, 0.40f, C_MUTED, "Gerenciador de saves  " APP_VERSION "  -  por Diego Reis");
     if (clk.y) {
         snprintf(buf, sizeof(buf), "%02d:%02d", clk.h, clk.mi);
@@ -630,7 +676,7 @@ static void render(void)
         snprintf(buf, sizeof(buf), "--:--");
         snprintf(buf2, sizeof(buf2), "--/--/----");
     }
-    text(W - M - tw(buf, 0.85f), 5, 0.85f, C_ACC, buf);
+    text_sh(W - M - tw(buf, 0.85f), 5, 0.85f, C_ACC, buf);
     text(W - M - tw(buf2, 0.40f), 34, 0.40f, C_MUTED, buf2);
 
     /* ---- abas ---- */
@@ -639,8 +685,8 @@ static void render(void)
         x = M;
         for (i = 0; i < 3; i++) {
             float w = tw(names[i], 0.55f) + 26;
-            if (i == tab) { hgrad(x, 64, w, 24, C_ACC, C_ACC2); text(x + 13, 69, 0.55f, C_DARK, names[i]); }
-            else          { rect(x, 64, w, 24, C_CARD);         text(x + 13, 69, 0.55f, C_MUTED, names[i]); }
+            if (i == tab) { rect(x, 88, w, 4, RGBA(0, 200, 255, 0x1C)); hgrad(x, 64, w, 24, C_ACC, C_ACC2); rect(x, 86, w, 2, RGBA(255, 255, 255, 0x50)); text(x + 13, 69, 0.55f, C_DARK, names[i]); }
+            else          { panel(x, 64, w, 24, RGBA(38, 43, 84, 0x80), RGBA(27, 30, 60, 0x80)); text(x + 13, 69, 0.55f, C_MUTED, names[i]); }
             x += w + 8;
         }
     }
@@ -701,7 +747,7 @@ static void render(void)
         }
         for (i = 0; i < 3; i++) {
             float tx = M + i * (tile + tgap);
-            rect(tx, 96, tile, 26, C_CARD);
+            panel(tx, 96, tile, 26, RGBA(40, 45, 86, 0x80), RGBA(26, 29, 58, 0x80));
             rect(tx, 96, 3, 26, i == 1 ? C_GREEN : C_ACC);
             text(tx + 11, 103, 0.40f, C_MUTED, lab[i]);
             text(tx + tile - 8 - tw(val[i], 0.50f), 102, 0.50f,
@@ -712,8 +758,12 @@ static void render(void)
 
     /* ---- grade de cards ---- */
     if (N == 0) {
-        rect(M, 134, W - 2 * M, 120, C_CARD);
-        rect(M, 134, W - 2 * M, 3, C_ACC);
+        soft_shadow(M, 134, W - 2 * M, 120);
+        panel(M, 134, W - 2 * M, 120, RGBA(40, 45, 86, 0x80), RGBA(24, 27, 56, 0x80));
+        hgrad(M, 134, W - 2 * M, 3, C_ACC, C_ACC2);
+        rect(M + 18, 160, 44, 44, RGBA(0, 0, 0, 0x40));                      /* icone grande: cartao vazio */
+        rect(M + 22, 164, 36, 36, RGBA(60, 66, 120, 0x80));
+        ctext(M + 40, 168, 0.9f, C_MUTED, "?");
         if (tab == TAB_MC) {
             ctext(W / 2, 160, 0.75f, C_TXT, mcReady ? (mcFullN > 0 ? "Nenhum save corresponde ao filtro" : "Nenhum save neste Memory Card") : (mcNoFmt ? "Cartao nao formatado ou corrompido" : "Insira um Memory Card"));
             ctext(W / 2, 200, 0.48f, C_MUTED, mcFullN > 0 ? "L3 abre o menu de filtros e busca" : "L2 troca o Memory Card");
@@ -748,7 +798,7 @@ static void render(void)
     }
 
     /* ---- rodape ---- */
-    rect(0, H - 56, W, 56, C_BAR);
+    vgrad(0, H - 56, W, 56, RGBA(22, 25, 54, 0x80), RGBA(13, 15, 34, 0x80));
     hgrad(0, H - 56, W, 2, C_ACC2, C_ACC);
     {
     x = M;
@@ -782,8 +832,9 @@ static void render(void)
     /* ---- aviso (toast) ---- */
     if (ui.toastT > 0) {
         float bw = tw(ui.toast, 0.50f) + 30;
-        rect((W - bw) / 2 + 2, H - 94, bw, 26, C_SHADOW);
-        rect((W - bw) / 2, H - 96, bw, 26, ui.toastErr ? C_RED : C_GREEN);
+        soft_shadow((W - bw) / 2, H - 96, bw, 26);
+        panel((W - bw) / 2, H - 96, bw, 26, ui.toastErr ? RGBA(255, 110, 120, 0x80) : RGBA(90, 240, 150, 0x80),
+                                           ui.toastErr ? RGBA(220, 60, 80, 0x80)   : RGBA(40, 190, 110, 0x80));
         ctext(W / 2, H - 90, 0.50f, C_DARK, ui.toast);
     }
 
@@ -792,27 +843,22 @@ static void render(void)
         float rh = ui.mn > 14 ? 21.0f : (ui.mn > 11 ? 23.0f : 26.0f);
         float mw = 500, mh = 66 + ui.mn * rh, mx = (W - mw) / 2, my = (H - mh) / 2 - 10;
         int k;
-        rect(0, 0, W, H, C_DIM);
-        rect(mx + 4, my + 5, mw, mh, C_SHADOW);
-        rect(mx, my, mw, mh, C_BAR);
-        hgrad(mx, my, mw, 4, C_ACC, C_ACC2);
+        window(mx, my, mw, mh);
         ctext(W / 2, my + 14, 0.65f, C_TXT, ui.title);
         for (k = 0; k < ui.mn; k++) {
             float iy = my + 44 + k * rh;
-            if (k == ui.msel) { hgrad(mx + 14, iy, mw - 28, rh - 4, C_ACC, C_ACC2); text(mx + 24, iy + (rh - 4 - 14) / 2, 0.48f, C_DARK, ui.mitem[k]); }
-            else              { rect(mx + 14, iy, mw - 28, rh - 4, C_CARD);         text(mx + 24, iy + (rh - 4 - 14) / 2, 0.48f, C_TXT, ui.mitem[k]); }
+            if (k == ui.msel) { hgrad(mx + 14, iy, mw - 28, rh - 4, C_ACC, C_ACC2); rect(mx + 14, iy, 4, rh - 4, RGBA(255, 255, 255, 0x80)); text(mx + 26, iy + (rh - 4 - 14) / 2, 0.48f, C_DARK, ui.mitem[k]); }
+            else              { panel(mx + 14, iy, mw - 28, rh - 4, RGBA(38, 43, 84, 0x80), RGBA(28, 31, 62, 0x80)); text(mx + 26, iy + (rh - 4 - 14) / 2, 0.48f, C_TXT, ui.mitem[k]); }
         }
         text(mx + 14, my + mh - 18, 0.38f, C_MUTED, "X escolher    O voltar");
     } else if (inEditing) {
         float bw = 540, bh = 332, bx = (W - bw) / 2, by = (H - bh) / 2, gx, ax;
         int r, c;
         char kc[2] = { 0, 0 };
-        rect(0, 0, W, H, C_DIM);
-        rect(bx + 4, by + 5, bw, bh, C_SHADOW);
-        rect(bx, by, bw, bh, C_BAR);
-        hgrad(bx, by, bw, 4, C_ACC, C_ACC2);
+        window(bx, by, bw, bh);
         ctext(W / 2, by + 12, 0.60f, C_MUTED, inTitle);
-        rect(bx + 20, by + 40, bw - 40, 36, C_CARD);
+        panel(bx + 20, by + 40, bw - 40, 36, RGBA(9, 11, 26, 0x80), RGBA(18, 20, 44, 0x80));
+        rect(bx + 20, by + 75, bw - 40, 1, RGBA(0, 200, 255, 0x80));
         text(bx + 30, by + 48, 0.70f, C_TXT, inBuf);
         if ((frameNo >> 4) & 1) rect(bx + 32 + tw(inBuf, 0.70f), by + 46, 3, 22, C_ACC);      /* cursor piscando */
         gx = bx + (bw - (10 * 44 + 9 * 4)) / 2;
@@ -821,14 +867,14 @@ static void render(void)
                 float kx = gx + c * 48, ky = by + 90 + r * 38;
                 kc[0] = kb_char(r, c);
                 if (r == inKr && c == inKc) { hgrad(kx, ky, 44, 32, C_ACC, C_ACC2); ctext(kx + 22, ky + 8, 0.62f, C_DARK, kc); }
-                else                        { rect(kx, ky, 44, 32, C_CARD);          ctext(kx + 22, ky + 8, 0.62f, C_TXT, kc); }
+                else                        { panel(kx, ky, 44, 32, RGBA(46, 51, 96, 0x80), RGBA(30, 34, 68, 0x80)); ctext(kx + 22, ky + 8, 0.62f, C_TXT, kc); }
             }
         }
         ax = bx + (bw - 496) / 2;
         for (c = 0; c < 6; c++) {
             const char *lb = (c == 0) ? (inCaps ? "ABC" : "abc") : KB_ACT[c];
             if (inKr == 4 && c == inKc) { hgrad(ax, by + 246, KB_ACTW[c], 32, C_ACC, C_ACC2); ctext(ax + KB_ACTW[c] / 2, by + 255, 0.48f, C_DARK, lb); }
-            else                        { rect(ax, by + 246, KB_ACTW[c], 32, C_CARD);          ctext(ax + KB_ACTW[c] / 2, by + 255, 0.48f, C_TXT, lb); }
+            else                        { panel(ax, by + 246, KB_ACTW[c], 32, RGBA(46, 51, 96, 0x80), RGBA(30, 34, 68, 0x80)); ctext(ax + KB_ACTW[c] / 2, by + 255, 0.48f, C_TXT, lb); }
             ax += KB_ACTW[c] + 4;
         }
         ctext(W / 2, by + 292, 0.38f, C_MUTED, "X digita   Quadrado apaga   Triangulo espaco   L1/R1 maiuscula");
@@ -837,10 +883,7 @@ static void render(void)
         float bw = 560, bh = 392, bx = (W - bw) / 2, by = (H - bh) / 2;
         int k, vis = 10;
         char sz[24], ln[64];
-        rect(0, 0, W, H, C_DIM);
-        rect(bx + 4, by + 5, bw, bh, C_SHADOW);
-        rect(bx, by, bw, bh, C_BAR);
-        hgrad(bx, by, bw, 4, C_ACC, C_ACC2);
+        window(bx, by, bw, bh);
         ctext(W / 2, by + 12, 0.60f, C_MUTED, "DETALHES DO SAVE");
         text(bx + 20, by + 38, 0.60f, C_ACC, dtTitle);
         for (k = 0; k < 3; k++) text(bx + 20, by + 66 + k * 16, 0.42f, C_TXT, dtL[k]);
@@ -849,7 +892,7 @@ static void render(void)
         for (k = 0; k < vis && dtScroll + k < dtN; k++) {
             const DFile *f = &dtF[dtScroll + k];
             float ry = by + 128 + k * 20;
-            if (k & 1) rect(bx + 20, ry - 2, bw - 40, 20, C_CARD);
+            if (k & 1) rect(bx + 20, ry - 2, bw - 40, 20, RGBA(255, 255, 255, 0x0E));
             text(bx + 28, ry, 0.42f, C_TXT, f->name);
             fmt_size(sz, sizeof(sz), f->size);
             text(bx + bw - 28 - tw(sz, 0.42f), ry, 0.42f, C_MUTED, sz);
@@ -866,10 +909,7 @@ static void render(void)
         char v[8], zs[40];
         int k;
         for (k = 0; k < 5; k++) tot += fw[k];
-        rect(0, 0, W, H, C_DIM);
-        rect(bx + 4, by + 5, bw, bh, C_SHADOW);
-        rect(bx, by, bw, bh, C_BAR);
-        hgrad(bx, by, bw, 4, C_ACC, C_ACC2);
+        window(bx, by, bw, bh);
         ctext(W / 2, by + 14, 0.65f, C_TXT, "ACERTAR DATA E HORA");
         fx = bx + (bw - tot) / 2;
         for (k = 0; k < 5; k++) {
@@ -888,18 +928,21 @@ static void render(void)
     } else if (ui.busy || ui.modal) {
         int nx = ui.modal ? ui.extraN : 0, k;
         float bh = 130 + nx * 18, bx = (W - 440) / 2, by = (H - bh) / 2, yb = by + 92 + nx * 18;
-        rect(0, 0, W, H, C_DIM);
-        rect(bx + 4, by + 5, 440, bh, C_SHADOW);
-        rect(bx, by, 440, bh, C_BAR);
-        hgrad(bx, by, 440, 4, C_ACC, C_ACC2);
+        window(bx, by, 440, bh);
         ctext(W / 2, by + 16, 0.7f, C_TXT, ui.title);
         ctext(W / 2, by + 48, 0.48f, C_MUTED, ui.msg);
         for (k = 0; k < nx; k++) ctext(W / 2, by + 70 + k * 18, 0.44f, ui.extraCol[k], ui.extra[k]);
         if (ui.busy) {
             float pct = ui.total ? (float)ui.done / (float)ui.total : 0.0f;
             if (pct > 1.0f) pct = 1.0f;
-            rect(bx + 30, by + 92, 380, 16, C_CARD);
+            panel(bx + 30, by + 92, 380, 16, RGBA(14, 16, 36, 0x80), RGBA(30, 34, 68, 0x80));
             hgrad(bx + 30, by + 92, 380 * pct, 16, C_ACC, C_ACC2);
+            rect(bx + 30, by + 92, 380 * pct, 2, RGBA(255, 255, 255, 0x40));
+            if (380 * pct > 40) {                                   /* faixa de brilho que corre pela barra */
+                float fw = 380 * pct, sx = (float)((frameNo * 3) % (int)fw), sw = 22;
+                if (sx + sw > fw) sw = fw - sx;
+                if (sw > 0) rect(bx + 30 + sx, by + 92, sw, 16, RGBA(255, 255, 255, 0x26));
+            }
             if (g_multi) ctext(W / 2, by + 112, 0.38f, C_MUTED, "Segure O para cancelar");
         } else if (ui.modal == 2) {
             key_btn(W / 2 - 30, yb, 0, C_BLUE, "OK");
