@@ -164,6 +164,7 @@ static void card_name(int i, char *b, int n)
 static int   cursorPos[4], topRow[4];
 static int   listMode = 0;                            /* 0 = grade de cards (4 colunas), 1 = lista (1 por linha) */
 #define COLS (listMode ? 1 : 4)
+static int   splash = 0;                              /* 1 = tela de abertura com a logo */
 static u32   frameNo;
 
 static sceMcTblGetDir mctbl[MAX_ENT]  __attribute__((aligned(64)));
@@ -743,6 +744,46 @@ static void draw_row(float x, float y, float w, float h, const Entry *e, int isC
     }
 }
 
+/* ---- logo: Memory Card com uma coroa (desenhada com sprites, qualquer tamanho) ----
+ * x,y = canto superior esquerdo; h = altura em pixels (a largura e 0.8 * h). */
+static u64 logo_col(float t)
+{
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+    return RGBA((int)(150.0f * t), (int)(200.0f - 110.0f * t), 255, 0x80);
+}
+
+static void draw_logo(float x, float y, float h)
+{
+    const float u = h / 300.0f;
+    int py, rows = (int)h, i, rd = (int)(9.0f * u + 0.5f);
+    for (py = 0; py < rows; py++) {
+        float yy = ((float)py + 0.5f) / u, xr, xi, w;
+        u64 c = logo_col(yy / 300.0f);
+        float ry = y + (float)py;
+        xr = yy < 72 ? 168 + yy : 240;
+        rect(x, ry, xr * u, 1, c);                                         /* borda (degrade) */
+        if (yy > 9 && yy < 291) {
+            xi = yy < 72 ? 168 + yy - 14 : 231;
+            rect(x + 9 * u, ry, (xi - 9) * u, 1, RGBA(18, 22, 56, 0x80));  /* miolo escuro */
+        }
+        if (yy >= 98 && yy < 142) { w = (yy - 98) * 30.0f / 44.0f; rect(x + (120 - w) * u, ry, 2 * w * u, 1, c); }
+        if (yy >= 112 && yy < 142) {
+            w = (yy - 112) * 32.0f / 30.0f;
+            rect(x + 58 * u, ry, w * u, 1, c);
+            rect(x + (182 - w) * u, ry, w * u, 1, c);
+        }
+        if (yy >= 142 && yy < 176) rect(x + 58 * u, ry, 124 * u, 1, c);     /* corpo da coroa */
+        if (yy >= 184 && yy < 200) rect(x + 58 * u, ry, 124 * u, 1, c);     /* faixa da base */
+        if (yy >= 236 && yy < 274)
+            for (i = 0; i < 5; i++) rect(x + (44 + 32 * i) * u, ry, 20 * u, 1, c);   /* contatos */
+    }
+    if (rd < 1) rd = 1;
+    fill_circle(x + 58 * u, y + 106 * u, rd, RGBA(255, 255, 255, 0x80));
+    fill_circle(x + 120 * u, y + 90 * u, rd + (h > 60 ? 1 : 0), RGBA(255, 255, 255, 0x80));
+    fill_circle(x + 182 * u, y + 106 * u, rd, RGBA(255, 255, 255, 0x80));
+}
+
 static void render(void)
 {
     const float W = (float)gsGlobal->Width, H = (float)gsGlobal->Height;
@@ -764,9 +805,7 @@ static void render(void)
     vgrad(0, 0, W, 54, RGBA(36, 40, 84, 0x80), RGBA(20, 22, 48, 0x80));
     hgrad(0, 54, W, 3, C_ACC, C_ACC2);
     vgrad(0, 57, W, 12, RGBA(100, 80, 255, 0x26), RGBA(100, 80, 255, 0x00));
-    rect(M - 2, 8, 38, 38, RGBA(0, 170, 255, 0x26));
-    hgrad(M, 10, 34, 34, C_ACC, C_ACC2);
-    ctext(M + 17, 16, 0.9f, C_TXT, "R");
+    draw_logo(M + 2, 9, 38);
     text_sh(M + 46, 7, 0.78f, C_TXT, APP_NAME);
     text(M + 48, 33, 0.40f, C_MUTED, "Gerenciador de saves  " APP_VERSION "  -  por Diego Reis");
     if (clk.y) {
@@ -949,6 +988,17 @@ static void render(void)
         panel((W - bw) / 2, H - 96, bw, 26, ui.toastErr ? RGBA(255, 110, 120, 0x80) : RGBA(90, 240, 150, 0x80),
                                            ui.toastErr ? RGBA(220, 60, 80, 0x80)   : RGBA(40, 190, 110, 0x80));
         ctext(W / 2, H - 90, 0.50f, C_DARK, ui.toast);
+    }
+
+    /* ---- tela de abertura: logo grande por cima de tudo ---- */
+    if (splash) {
+        float lh = 100, lx = W / 2 - 215, ly = 44;
+        vgrad(0, 0, W, H, RGBA(16, 18, 42, 0x80), RGBA(7, 8, 20, 0x80));
+        hgrad(0, 0, W, 6, C_ACC, C_ACC2);
+        draw_logo(lx, ly, lh);
+        text_sh(lx + 100, ly + 2, 0.80f, C_TXT, "SAVE MANAGER");
+        text_sh(lx + 98, ly + 22, 1.75f, C_ACC, "REIS");
+        text(lx + 100, ly + 82, 0.45f, C_MUTED, "HOMEBREW PS2  " APP_VERSION);
     }
 
     /* ---- janela de progresso / confirmacao ---- */
@@ -5005,12 +5055,14 @@ int main(int argc, char *argv[])
     snprintf(ui.title, sizeof(ui.title), "INICIANDO");
     snprintf(ui.msg, sizeof(ui.msg), "Procurando Memory Card e USB...");
     ui.busy = 1; ui.total = 100;
+    splash = 1;
     for (i = 0; i < 120; i++) {                 /* ~2s para o USB montar */
         progress("Procurando Memory Card e USB...", i, 120);
         if (i == 5 || i == 20) cards_init();                   /* o multitap demora para ser detectado */
-        if (i > 20 && usb_ready()) break;
+        if (i > 70 && usb_ready()) break;        /* minimo ~1 s: mostra a logo */
     }
     ui.busy = 0;
+    splash = 0;
 
     config_load_apply(0);                           /* le o config.ini do pendrive (se houver) */
     refresh_mc();

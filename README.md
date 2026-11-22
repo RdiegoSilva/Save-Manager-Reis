@@ -4,6 +4,8 @@ Criado por **Diego Reis**.
 
 Gerenciador de saves com interface estilo dashboard.
 
+A logo (um Memory Card com uma coroa) aparece na tela de abertura e no cabeçalho; é desenhada pelo próprio programa, sem arquivo de imagem.
+
 ## O que faz
 
 - Lista os saves do **Memory Card** (slot 1 / slot 2, ou todos os cartões de um **multitap**: 1A–1D e 2A–2D) em cards organizados:
@@ -97,7 +99,8 @@ Aperte **START** em qualquer aba. Funciona também com cartão não formatado. O
 - **Verificar saves:** lê todos os arquivos de cada save e confere se existe `icon.sys`. Lista os que têm problema e oferece apagá-los.
 - **Apagar saves marcados:** apaga os marcados (ou o card selecionado). Oferece backup antes.
 - **Copiar marcados para o outro Memory Card:** copia os saves marcados (ou o selecionado) do slot atual para outro slot, direto, sem passar pelo USB. Com multitap, pergunta qual slot é o destino. Avisa se o save já existe e confere o espaço livre.
-- **Ajustes:** submenu com Som (liga e desliga os efeitos), **Modo de vídeo**, Acertar data e hora e Créditos (versão e autor, Diego Reis).
+- **Créditos:** mostra a versão, o desenvolvedor (Diego Reis) e o nome da música (HilalDeep - All for Music (Original Mix)). Também fica dentro de Ajustes.
+- **Ajustes:** submenu com Som (liga e desliga os efeitos), **Modo de vídeo**, Acertar data e hora e Créditos (versão, autor Diego Reis e música: HilalDeep - All for Music (Original Mix)).
 - **Modo de vídeo:** veja a seção abaixo.
 - **Acertar data e hora** (dentro de Ajustes): edita dia, mês, ano, hora e minuto (Cima/Baixo altera, Esq/Dir muda o campo, X grava, O cancela) e grava no relógio do console. A hora é a do fuso configurado no PS2. Os backups usam essa data no nome.
 - **Trocar ícone do save:** troca a imagem do ícone 3D do save por uma sua. Veja a seção abaixo.
