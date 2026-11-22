@@ -258,6 +258,7 @@ static void get_now(Now *n)
  * ============================================================ */
 static Now clk;
 static int clkT;
+static int volEditing = 0, volVal = 6;                 /* seletor de volume da musica */
 static int clkEditing = 0, clkSel = 0, clkEd[5];     /* editor: dia, mes, ano, hora, minuto */
 /* entrada de texto (busca) */
 static int  inEditing = 0, inLen = 0, inKr = 0, inKc = 0, inCaps = 1;    /* teclado na tela */
@@ -994,6 +995,26 @@ static void render(void)
             ctext(W / 2, by + bh - 44, 0.40f, C_MUTED, ln);
         }
         ctext(W / 2, by + bh - 24, 0.42f, C_ACC2, "Cima/Baixo rolar    O fechar");
+    } else if (volEditing) {
+        float bw = 500, bh = 236, bx = (W - bw) / 2, by = (H - bh) / 2;
+        float sw = 38, gap = 4, sx = bx + (bw - (10 * sw + 9 * gap)) / 2, sy = by + 104;
+        char pc[16];
+        int k;
+        window(bx, by, bw, bh);
+        ctext(W / 2, by + 14, 0.65f, C_TXT, "VOLUME DA MUSICA");
+        snprintf(pc, sizeof(pc), "%d%%", volVal * 10);
+        ctext(W / 2, by + 46, 1.0f, volVal ? C_ACC : C_RED, pc);
+        for (k = 0; k < 10; k++) {
+            float h = 22 + k * 3, x = sx + k * (sw + gap), y = sy + 36 - h;   /* barras crescentes, como um indicador de volume */
+            if (k < volVal) { vgrad(x, y, sw, h, C_ACC, C_ACC2); rect(x, y, sw, 2, RGBA(255, 255, 255, 0x40)); }
+            else              rect(x, y, sw, h, C_CARD);
+        }
+        ctext(W / 2, sy + 44, 0.38f, C_MUTED, volVal == 0 ? "MUDO" : (volVal == 10 ? "MAXIMO" : " "));
+        if (!snd_music_present())      ctext(W / 2, by + 168, 0.40f, C_RED, "Sem musica carregada (musica.wav)");
+        else if (!snd_music_enabled()) ctext(W / 2, by + 168, 0.40f, C_RED, "Musica desligada: ligue em Ajustes para ouvir");
+        else                           ctext(W / 2, by + 168, 0.40f, C_GREEN, "Tocando: o volume muda na hora");
+        ctext(W / 2, by + 190, 0.38f, C_MUTED, "Esq/Dir ajusta   Cima maximo   Baixo mudo");
+        ctext(W / 2, by + 206, 0.38f, C_MUTED, "Quadrado padrao (60%)   X confirmar   O cancelar");
     } else if (clkEditing) {
         static const char *lab[5] = { "DIA", "MES", "ANO", "HORA", "MIN" };
         static const float fw[5] = { 64, 64, 96, 64, 64 };
@@ -4662,16 +4683,48 @@ static void show_credits(void)
     ui.extraN = 0;
 }
 
+/* seletor de volume da musica: ajusta ao vivo; X confirma, O volta ao valor anterior */
+static void tool_volume(void)
+{
+    int old = snd_music_volume(), done = 0, v;
+    volVal = old;
+    volEditing = 1;
+    snd_play(SND_TAB);
+    while (!done) {
+        read_pad();
+        v = volVal;
+        if (pad_new & PAD_RIGHT)  v++;
+        if (pad_new & PAD_LEFT)   v--;
+        if (pad_new & PAD_UP)     v = 10;
+        if (pad_new & PAD_DOWN)   v = 0;
+        if (pad_new & PAD_SQUARE) v = 6;
+        if (v < 0) v = 0;
+        if (v > 10) v = 10;
+        if (v != volVal) { volVal = v; snd_music_volume_set(v); snd_play(SND_MOVE); }
+        if (pad_new & PAD_CIRCLE) { snd_music_volume_set(old); done = 1; snd_play(SND_BACK); }
+        if (pad_new & PAD_CROSS)  { done = 1; snd_play(SND_OK); }
+        render();
+        present();
+    }
+    volEditing = 0;
+}
+
 static void tool_settings(void)
 {
     for (;;) {
-        char l0[40], l1[56], l2[40], l3[56];
+        char l0[40], l1[56], l2[64], l3[56];
         const char *it[7];
         int c;
         snprintf(l0, sizeof(l0), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
         if (!snd_music_present()) snprintf(l1, sizeof(l1), "Musica: sem arquivo (musica.wav)");
         else                      snprintf(l1, sizeof(l1), "Musica: %s", snd_music_enabled() ? "Ligada" : "Desligada");
-        snprintf(l2, sizeof(l2), "Volume da musica: %d/10", snd_music_volume());
+        {
+            char bar[11];
+            int k, vv = snd_music_volume();
+            for (k = 0; k < 10; k++) bar[k] = (k < vv) ? '|' : '.';
+            bar[10] = 0;
+            snprintf(l2, sizeof(l2), "Volume da musica: [%s] %d%%", bar, vv * 10);
+        }
         snprintf(l3, sizeof(l3), "Modo de video: %s", VID_NAME[vidMode]);
         it[0] = l0; it[1] = l1; it[2] = l2; it[3] = l3; it[4] = "Acertar data e hora"; it[5] = "Creditos"; it[6] = "Voltar";
         c = menu_run("AJUSTES", it, 7);
@@ -4685,7 +4738,7 @@ static void tool_settings(void)
             } else snd_music_set(!snd_music_enabled());
             snd_play(SND_OK);
         }
-        else if (c == 2) { snd_music_volume_set((snd_music_volume() + 2) % 12); snd_play(SND_SELECT); }   /* 0,2,4,...,10 */
+        else if (c == 2) tool_volume();
         else if (c == 3) tool_video();
         else if (c == 4) tool_clock();
         else if (c == 5) show_credits();

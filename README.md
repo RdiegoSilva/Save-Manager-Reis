@@ -169,7 +169,8 @@ Coloque um arquivo chamado **`musica.wav`** em `mass:/SaveManagerReis/` (no pend
 
 - Formato: **WAV PCM de 8 ou 16 bits**, mono ou estéreo, qualquer taxa. O arquivo é lido inteiro para a RAM, com limite de **14 MB** (use 22 kHz para músicas mais longas: ~5 MB por minuto em 22 kHz estéreo é um bom ponto de partida).
 - Converter com o ffmpeg: `ffmpeg -i minha_musica.mp3 -ar 22050 -ac 2 -c:a pcm_s16le musica.wav`
-- **START → Ajustes**: liga/desliga a música, ajusta o volume (0 a 10) e recarrega o arquivo se ele foi colocado depois. A escolha fica salva no `config.ini`.
+- **START → Ajustes**: liga/desliga a música, abre o **seletor de volume** (0 a 100%, em 10 passos) e recarrega o arquivo se ele foi colocado depois. A escolha fica salva no `config.ini`.
+- **Seletor de volume** (Ajustes → Volume da música): barras crescentes e porcentagem na tela, com ajuste ao vivo enquanto a música toca. **Esq/Dir** ±10%, **Cima** máximo, **Baixo** mudo, **Quadrado** volta ao padrão (60%), **X** confirma e **O** cancela (volta ao valor anterior).
 - Sem o arquivo, o app funciona normalmente, só com os efeitos.
 
 ### Música embutida no ELF (sem pendrive)
