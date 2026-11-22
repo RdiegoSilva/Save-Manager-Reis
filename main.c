@@ -275,7 +275,7 @@ typedef struct { char name[36]; u32 size; } DFile;
 static DFile dtF[96];
 static int   dtN = 0, dtScroll = 0, dtOpen = 0;
 #define TUT_PAGES 3
-static int   tutOpen = 0, tutPage = 0;      /* tutorial (R3) */
+static int   tutOpen = 0, tutPage = 0;      /* tutorial (menu START) */
 static char  dtTitle[48], dtL[3][80], dtNote[80];
 
 /* ---- modo de video: a interface e desenhada numa tela virtual (largura x altura do gsGlobal).
@@ -857,7 +857,7 @@ static void render(void)
         x = key_btn(x, H - 50, 2, C_GREEN, tl);
     }
     x = key_btn(x, H - 50, 3, C_RED, "Atualizar");
-    if (x + 90 < W) key_pill(x, H - 50, "R3", "Ajuda");
+    if (x + 90 < W) key_pill(x, H - 50, "R3", "Detalhes");
     x = M;
     x = key_pill(x, H - 30, "L1/R1", "Abas");
     if (tab == TAB_MC) {
@@ -951,7 +951,7 @@ static void render(void)
             tut_key(bx, ly, "SELECT", "Atualiza as listas do cartao e do USB");            ly += 30;
             tut_key(bx, ly, "START",  "Abre o menu de ferramentas");                       ly += 30;
             tut_key(bx, ly, "L3",     "Ordenar, filtrar por regiao e buscar saves");       ly += 30;
-            tut_key(bx, ly, "R3",     "Abre este tutorial");
+            tut_key(bx, ly, "R3",     "Detalhes do save (arquivos e tamanhos)");
         } else {
             static const char *NM[13] = { "Verificar", "Apagar", "Copiar", "Icone", "Backup de tudo", "Recuperar cartao", "Formatar",
                                           "Organizar (L3)", "Detalhes", "Renomear", "Recuperar save", "Criar VMC", "Ajustes" };
@@ -4624,7 +4624,7 @@ static void show_tutorial(void)
         read_pad();
         if ((pad_new & (PAD_RIGHT | PAD_R1)) && tutPage < TUT_PAGES - 1) { tutPage++; snd_play(SND_TAB); }
         if ((pad_new & (PAD_LEFT | PAD_L1)) && tutPage > 0)              { tutPage--; snd_play(SND_TAB); }
-        if (pad_new & (PAD_CIRCLE | PAD_CROSS | PAD_R3)) { done = 1; snd_play(SND_BACK); }
+        if (pad_new & (PAD_CIRCLE | PAD_CROSS)) { done = 1; snd_play(SND_BACK); }
         render();
         present();
     }
@@ -4670,13 +4670,13 @@ static void do_mc_tools(void)
         "Recuperar cartao ilegivel / corrompido",
         "Formatar Memory Card",
         "Organizar / filtrar / buscar  (L3)",
-        "Detalhes do save",
+        "Detalhes do save  (R3)",
         "Renomear (nome do jogo, pasta ou backup)",
         "Recuperar save selecionado (corrompido)",
         "Criar cartao virtual novo (VMC)",
         "Ajustes (som, video, data e hora, creditos)",
         "Sair do aplicativo",
-        "Tutorial: o que cada botao faz  (R3)"
+        "Tutorial: o que cada botao faz"
     };
     int c;
     c = menu_run("FERRAMENTAS", items, 15);
@@ -4855,7 +4855,7 @@ int main(int argc, char *argv[])
         }
 
         if (pad_new & PAD_L3) { tool_view(); continue; }
-        if (pad_new & PAD_R3) { show_tutorial(); continue; }
+        if ((pad_new & PAD_R3) && N > 0) { show_details(tab); continue; }
 
         if (N > 0) {
             int *c = &cursorPos[tab];
