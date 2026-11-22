@@ -64,7 +64,7 @@ extern unsigned char musica_wav[];       extern unsigned int size_musica_wav;   
 
 /* ---------------- Constantes ---------------- */
 #define APP_NAME      "SAVE MANAGER REIS"
-#define APP_VERSION   "v1.4"
+#define APP_VERSION   "v2.0"
 #define ROOT_DIR      "mass:/SaveManagerReis"
 #define MAX_ENT       128
 #define CHUNK         (32 * 1024)
@@ -4769,7 +4769,9 @@ static void show_credits(void)
     snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
     snprintf(ui.extra[1], sizeof(ui.extra[1]), "Criado por Diego Reis");
     ui.extraCol[0] = C_MUTED; ui.extraCol[1] = C_ACC;
-    ui.extraN = 2;
+    snprintf(ui.extra[2], sizeof(ui.extra[2]), "Musica: HilalDeep - All for Music (Original Mix)");
+    ui.extraCol[2] = C_TXT;
+    ui.extraN = 3;
     info("SAVE MANAGER REIS " APP_VERSION, "Creditos");
     ui.extraN = 0;
 }
