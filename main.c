@@ -26,6 +26,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -340,6 +341,39 @@ static void hgrad(float x, float y, float w, float h, u64 c1, u64 c2)
     gsKit_prim_quad_gouraud(gsGlobal, X0, Y0, X1, Y0, X0, Y1, X1, Y1, 1, c1, c2, c1, c2);
 }
 
+/* retangulo com cantos arredondados (raio r) e degrade vertical (c1 em cima, c2 embaixo) */
+static int rr_inset(int dy, int r)
+{
+    float d = (float)(r - dy) - 0.5f, q = (float)(r * r) - d * d;
+    return r - (int)(q > 0 ? sqrtf(q) : 0.0f);
+}
+
+static void rpanel(float x, float y, float w, float h, int r, u64 c1, u64 c2)
+{
+    int dy;
+    if (h < 2 * r + 1) r = (int)(h / 2);
+    for (dy = 0; dy < r; dy++) {
+        float ins = (float)rr_inset(dy, r);
+        rect(x + ins, y + dy, w - 2 * ins, 1, c1);
+        rect(x + ins, y + h - 1 - dy, w - 2 * ins, 1, c2);
+    }
+    vgrad(x, y + r, w, h - 2 * r, c1, c2);
+}
+
+/* igual, com degrade horizontal */
+static void rpanel_h(float x, float y, float w, float h, int r, u64 c1, u64 c2)
+{
+    int dy;
+    if (h < 2 * r + 1) r = (int)(h / 2);
+    for (dy = 0; dy < r; dy++) {
+        float ins = (float)rr_inset(dy, r);
+        hgrad(x + ins, y + dy, w - 2 * ins, 1, c1, c2);
+        hgrad(x + ins, y + h - 1 - dy, w - 2 * ins, 1, c1, c2);
+    }
+    hgrad(x, y + r, w, h - 2 * r, c1, c2);
+}
+
+
 static void text(float x, float y, float scale, u64 col, const char *s)
 {
     gsKit_fontm_print_scaled(gsGlobal, font, VX(x), VY(y), 1, scale * vsc, col, s);
@@ -455,7 +489,7 @@ static float key_btn(float x, float y, int kind, u64 col, const char *label)
 static float key_pill(float x, float y, const char *keys, const char *label)
 {
     float w = tw(keys, 0.38f) + 12;
-    rect(x, y, w, 18, C_CARD);
+    rpanel(x, y, w, 18, 4, RGBA(40, 45, 92, 0x80), RGBA(32, 36, 78, 0x80));
     text(x + 6, y + 4, 0.38f, C_ACC, keys);
     text(x + w + 6, y + 3, 0.45f, C_TXT, label);
     return x + w + 6 + tw(label, 0.45f) + 14;
@@ -722,14 +756,16 @@ static void draw_row(float x, float y, float w, float h, const Entry *e, int isC
     float rx = x + w - 10;
 
     if (isCur) {
-        int p = (int)(frameNo % 60), a = p < 30 ? p : 60 - p;
-        rect(x - 2, y - 2, w + 4, h + 4, RGBA(0, 140 + a * 4, 255, 0x80));
+        int p = (int)(frameNo % 60), a = p < 30 ? p : 60 - p, k;
+        for (k = 3; k >= 1; k--)                                         /* brilho em volta da linha selecionada */
+            rpanel(x - 2 - k * 2, y - 2 - k * 2, w + 4 + k * 4, h + 4 + k * 4, 8 + k, RGBA(0, 170, 255, (u8)(6 + (4 - k) * 4)), RGBA(0, 170, 255, (u8)(6 + (4 - k) * 4)));
+        rpanel(x - 2, y - 2, w + 4, h + 4, 9, RGBA(0, 140 + a * 4, 255, 0x80), RGBA(0, 140 + a * 4, 255, 0x80));
     }
-    panel(x, y, w, h, e->sel ? RGBA(32, 96, 116, 0x80) : RGBA(41, 46, 88, 0x80),
-                      e->sel ? RGBA(22, 66, 84, 0x80)  : RGBA(26, 29, 59, 0x80));
-    rect(x, y, 3, h, isUsb ? C_ACC2 : reg_col(r));
+    rpanel(x, y, w, h, 7, e->sel ? RGBA(32, 96, 116, 0x80) : (isCur ? RGBA(42, 58, 120, 0x80) : RGBA(38, 43, 94, 0x80)),
+                           e->sel ? RGBA(22, 66, 84, 0x80)  : (isCur ? RGBA(29, 42, 94, 0x80)  : RGBA(26, 29, 68, 0x80)));
+    rect(x + 1, y + 6, 3, h - 12, isUsb ? C_ACC2 : reg_col(r));
 
-    rect(x + 6, y + 2, h - 4, h - 4, RGBA(0, 0, 0, 0x3C));              /* icone */
+    rpanel(x + 6, y + 2, h - 4, h - 4, 4, RGBA(0, 0, 0, 0x3C), RGBA(0, 0, 0, 0x3C));   /* icone */
     if (ic) {
         draw_icon(slot, ic, x + 7, y + 3, h - 6);
     } else {
@@ -752,7 +788,7 @@ static void draw_row(float x, float y, float w, float h, const Entry *e, int isC
             const char *tg = FMT_NAME[e->kind];
             text(fmtR - tw(tg, 0.42f), y + 8, 0.42f, C_ACC2, tg);
         }
-        rect(chipX, y + 7, 32, 16, reg_col(r));                                             /* etiqueta da regiao */
+        rpanel(chipX, y + 7, 32, 16, 5, reg_col(r), reg_col(r));                            /* etiqueta da regiao */
         ctext(chipX + 16, y + 10, 0.34f, C_DARK, REG_TAG[r]);
         rx = chipX - 8;
     }
@@ -857,8 +893,14 @@ static void render(void)
         x = M;
         for (i = 0; i < 3; i++) {
             float w = tw(names[i], 0.55f) + 26;
-            if (i == tab) { rect(x, 88, w, 4, RGBA(0, 200, 255, 0x1C)); hgrad(x, 64, w, 24, C_ACC, C_ACC2); rect(x, 86, w, 2, RGBA(255, 255, 255, 0x50)); text(x + 13, 69, 0.55f, C_DARK, names[i]); }
-            else          { panel(x, 64, w, 24, RGBA(38, 43, 84, 0x80), RGBA(27, 30, 60, 0x80)); text(x + 13, 69, 0.55f, C_MUTED, names[i]); }
+            if (i == tab) {
+                rpanel(x - 3, 61, w + 6, 30, 9, RGBA(0, 200, 255, 0x14), RGBA(0, 200, 255, 0x14));     /* brilho */
+                rpanel_h(x, 64, w, 24, 7, C_ACC, C_ACC2);
+                text(x + 13, 69, 0.55f, C_DARK, names[i]);
+            } else {
+                rpanel(x, 64, w, 24, 7, RGBA(40, 45, 92, 0x80), RGBA(32, 36, 78, 0x80));
+                text(x + 13, 69, 0.55f, C_MUTED, names[i]);
+            }
             x += w + 8;
         }
     }
@@ -868,8 +910,8 @@ static void render(void)
             text(bx - 8 - tw("SLOT", 0.45f), 70, 0.45f, C_MUTED, "SLOT");
             for (i = 0; i < 2; i++) {
                 float sx = bx + i * 32;
-                if (i == mcSlot) { hgrad(sx, 64, 28, 24, C_ACC, C_ACC2); ctext(sx + 14, 69, 0.55f, C_DARK, i ? "2" : "1"); }
-                else             { rect(sx, 64, 28, 24, C_CARD);         ctext(sx + 14, 69, 0.55f, C_MUTED, i ? "2" : "1"); }
+                if (i == mcSlot) { rpanel_h(sx, 64, 28, 24, 6, C_ACC, C_ACC2);                                  ctext(sx + 14, 69, 0.55f, C_DARK, i ? "2" : "1"); }
+                else             { rpanel(sx, 64, 28, 24, 6, RGBA(40, 45, 92, 0x80), RGBA(32, 36, 78, 0x80));   ctext(sx + 14, 69, 0.55f, C_MUTED, i ? "2" : "1"); }
             }
         } else {                                   /* multitap: mostra "1B  (2/8)" */
             char nm[8], lb[32];
@@ -879,7 +921,7 @@ static void render(void)
             w = tw(lb, 0.55f) + 22;
             sx = W - M - w;
             text(sx - 8 - tw("SLOT", 0.45f), 70, 0.45f, C_MUTED, "SLOT");
-            hgrad(sx, 64, w, 24, C_ACC, C_ACC2);
+            rpanel_h(sx, 64, w, 24, 6, C_ACC, C_ACC2);
             ctext(sx + w / 2, 69, 0.55f, C_DARK, lb);
         }
     } else if (tab == TAB_CONV) {
@@ -919,8 +961,8 @@ static void render(void)
         }
         for (i = 0; i < 3; i++) {
             float tx = M + i * (tile + tgap);
-            panel(tx, 96, tile, 26, RGBA(40, 45, 86, 0x80), RGBA(26, 29, 58, 0x80));
-            rect(tx, 96, 3, 26, i == 1 ? C_GREEN : C_ACC);
+            rpanel(tx, 96, tile, 26, 7, RGBA(40, 45, 92, 0x80), RGBA(28, 32, 74, 0x80));
+            rect(tx + 1, 101, 3, 16, i == 1 ? C_GREEN : C_ACC);
             text(tx + 11, 103, 0.40f, C_MUTED, lab[i]);
             text(tx + tile - 8 - tw(val[i], 0.50f), 102, 0.50f,
                  (tab == TAB_MC && i == 2 && mcReady && mcFreeKB < 256) ? C_RED :
