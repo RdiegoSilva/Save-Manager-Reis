@@ -61,7 +61,7 @@ extern unsigned char audsrv_irx[];       extern unsigned int size_audsrv_irx;
 
 /* ---------------- Constantes ---------------- */
 #define APP_NAME      "SAVE MANAGER REIS"
-#define APP_VERSION   "v1.2"
+#define APP_VERSION   "v1.3"
 #define ROOT_DIR      "mass:/SaveManagerReis"
 #define MAX_ENT       128
 #define CHUNK         (32 * 1024)
@@ -274,6 +274,8 @@ static char kb_char(int r, int c)                      /* caractere da tecla (re
 typedef struct { char name[36]; u32 size; } DFile;
 static DFile dtF[96];
 static int   dtN = 0, dtScroll = 0, dtOpen = 0;
+#define TUT_PAGES 3
+static int   tutOpen = 0, tutPage = 0;      /* tutorial (R3) */
 static char  dtTitle[48], dtL[3][80], dtNote[80];
 
 /* ---- modo de video: a interface e desenhada numa tela virtual (largura x altura do gsGlobal).
@@ -436,6 +438,15 @@ static float key_pill(float x, float y, const char *keys, const char *label)
     text(x + 6, y + 4, 0.38f, C_ACC, keys);
     text(x + w + 6, y + 3, 0.45f, C_TXT, label);
     return x + w + 6 + tw(label, 0.45f) + 18;
+}
+
+/* linha do tutorial: tecla em "pilula" na coluna da esquerda e a explicacao a partir de bx+120 */
+static void tut_key(float bx, float y, const char *keys, const char *label)
+{
+    float w = tw(keys, 0.38f) + 12;
+    rect(bx + 22, y, w, 18, C_CARD);
+    text(bx + 28, y + 4, 0.38f, C_ACC, keys);
+    text(bx + 120, y + 3, 0.44f, C_TXT, label);
 }
 
 /* ---- regiao do jogo a partir do nome da pasta ---- */
@@ -846,6 +857,7 @@ static void render(void)
         x = key_btn(x, H - 50, 2, C_GREEN, tl);
     }
     x = key_btn(x, H - 50, 3, C_RED, "Atualizar");
+    if (x + 90 < W) key_pill(x, H - 50, "R3", "Ajuda");
     x = M;
     x = key_pill(x, H - 30, "L1/R1", "Abas");
     if (tab == TAB_MC) {
@@ -913,6 +925,49 @@ static void render(void)
         }
         ctext(W / 2, by + 292, 0.38f, C_MUTED, "X digita   Quadrado apaga   Triangulo espaco   L1/R1 maiuscula");
         ctext(W / 2, by + 308, 0.38f, C_ACC2, "START confirma    O cancela");
+    } else if (tutOpen) {
+        static const char *TT[TUT_PAGES] = { "BOTOES DO CONTROLE", "ATALHOS", "ABAS, FORMATOS E MENU START" };
+        float bw = 580, bh = 392, bx = (W - bw) / 2, by = (H - bh) / 2, ly = by + 74;
+        char pg[16];
+        int k;
+        window(bx, by, bw, bh);
+        ctext(W / 2, by + 12, 0.60f, C_MUTED, "TUTORIAL");
+        text(bx + 20, by + 38, 0.60f, C_ACC, TT[tutPage]);
+        snprintf(pg, sizeof(pg), "%d/%d", tutPage + 1, TUT_PAGES);
+        text(bx + bw - 20 - tw(pg, 0.44f), by + 40, 0.44f, C_MUTED, pg);
+        if (tutPage == 0) {
+            pad_btn(bx + 22, ly, 0, C_BLUE);   text(bx + 54, ly + 3, 0.44f, C_TXT, "Marca / desmarca o save selecionado");                     ly += 34;
+            pad_btn(bx + 22, ly, 1, C_PINK);   text(bx + 54, ly + 3, 0.44f, C_TXT, "Marca todos (se todos ja estao marcados, desmarca)");      ly += 34;
+            pad_btn(bx + 22, ly, 2, C_GREEN);  text(bx + 54, ly + 3, 0.44f, C_TXT, "Exporta p/ USB (aba Memory Card), importa p/ cartao (aba USB)"); ly += 18;
+            text(bx + 54, ly + 3, 0.44f, C_TXT, "ou converte (aba Converter)");                                                                    ly += 34;
+            pad_btn(bx + 22, ly, 3, C_RED);    text(bx + 54, ly + 3, 0.44f, C_TXT, "Atualiza a lista de saves");                               ly += 40;
+            text(bx + 22, ly, 0.44f, C_ACC, "Direcional");
+            text(bx + 120, ly, 0.44f, C_TXT, "Move o cursor entre os saves");                                                                   ly += 30;
+            text(bx + 22, ly, 0.40f, C_MUTED, "Segure O durante uma copia ou conversao para cancelar.");
+        } else if (tutPage == 1) {
+            tut_key(bx, ly, "L1/R1",  "Troca de aba (Memory Card / USB / Converter)");   ly += 30;
+            tut_key(bx, ly, "L2",     "Troca o slot do Memory Card (inclusive multitap)"); ly += 30;
+            tut_key(bx, ly, "R2",     "Muda o formato de exportacao (Converter: destino)"); ly += 30;
+            tut_key(bx, ly, "SELECT", "Atualiza as listas do cartao e do USB");            ly += 30;
+            tut_key(bx, ly, "START",  "Abre o menu de ferramentas");                       ly += 30;
+            tut_key(bx, ly, "L3",     "Ordenar, filtrar por regiao e buscar saves");       ly += 30;
+            tut_key(bx, ly, "R3",     "Abre este tutorial");
+        } else {
+            static const char *NM[13] = { "Verificar", "Apagar", "Copiar", "Icone", "Backup de tudo", "Recuperar cartao", "Formatar",
+                                          "Organizar (L3)", "Detalhes", "Renomear", "Recuperar save", "Criar VMC", "Ajustes" };
+            static const char *DS[13] = { "acha saves corrompidos", "apaga os saves marcados", "copia p/ o outro Memory Card", "troca o icone (BMP 128x128)",
+                                          "todos os saves p/ o USB", "cartao ilegivel / corrompido", "apaga o cartao inteiro",
+                                          "ordem, filtro e busca", "arquivos e tamanho do save", "nome do jogo, pasta ou backup",
+                                          "tenta salvar o save selecionado", "cartao virtual novo (OPL)", "som, video, hora, creditos" };
+            text(bx + 20, ly - 8, 0.40f, C_MUTED, "Formatos: Pasta, PSU, MAX (compactado). Le tambem CBS, SPS, XPS e VMC.");
+            text(bx + 20, ly + 8, 0.40f, C_MUTED, "Abas: Memory Card (cartao), USB (backups no pendrive), Converter.");
+            for (k = 0; k < 13; k++) {
+                float ry = ly + 32 + k * 17;
+                text(bx + 20, ry, 0.40f, C_ACC, NM[k]);
+                text(bx + 170, ry, 0.40f, C_TXT, DS[k]);
+            }
+        }
+        ctext(W / 2, by + bh - 24, 0.42f, C_ACC2, "Esq/Dir muda de pagina    O fechar");
     } else if (dtOpen) {
         float bw = 560, bh = 392, bx = (W - bw) / 2, by = (H - bh) / 2;
         int k, vis = 10;
@@ -4560,6 +4615,22 @@ static void tool_video(void)
     else      { video_apply(old); toast_s("Modo de video anterior restaurado", 0); }
 }
 
+static void show_tutorial(void)
+{
+    int done = 0;
+    tutPage = 0; tutOpen = 1;
+    snd_play(SND_TAB);
+    while (!done) {
+        read_pad();
+        if ((pad_new & (PAD_RIGHT | PAD_R1)) && tutPage < TUT_PAGES - 1) { tutPage++; snd_play(SND_TAB); }
+        if ((pad_new & (PAD_LEFT | PAD_L1)) && tutPage > 0)              { tutPage--; snd_play(SND_TAB); }
+        if (pad_new & (PAD_CIRCLE | PAD_CROSS | PAD_R3)) { done = 1; snd_play(SND_BACK); }
+        render();
+        present();
+    }
+    tutOpen = 0;
+}
+
 static void show_credits(void)
 {
     snprintf(ui.extra[0], sizeof(ui.extra[0]), "Gerenciador de saves para PlayStation 2");
@@ -4590,7 +4661,7 @@ static void tool_settings(void)
 
 static void do_mc_tools(void)
 {
-    const char *items[14] = {
+    const char *items[15] = {
         "Verificar saves (detectar corrompidos)",
         "Apagar saves marcados",
         "Copiar marcados para o outro Memory Card",
@@ -4599,15 +4670,16 @@ static void do_mc_tools(void)
         "Recuperar cartao ilegivel / corrompido",
         "Formatar Memory Card",
         "Organizar / filtrar / buscar  (L3)",
-        "Detalhes do save  (R3)",
+        "Detalhes do save",
         "Renomear (nome do jogo, pasta ou backup)",
         "Recuperar save selecionado (corrompido)",
         "Criar cartao virtual novo (VMC)",
         "Ajustes (som, video, data e hora, creditos)",
-        "Sair do aplicativo"
+        "Sair do aplicativo",
+        "Tutorial: o que cada botao faz  (R3)"
     };
     int c;
-    c = menu_run("FERRAMENTAS", items, 14);
+    c = menu_run("FERRAMENTAS", items, 15);
     if (c >= 0 && c <= 6) tab = TAB_MC;       /* as ferramentas atuam no Memory Card */
     if (c == 7) { tool_view(); return; }
     if (c == 8) { show_details(tab); return; }
@@ -4615,6 +4687,7 @@ static void do_mc_tools(void)
     if (c == 10) { tool_recover_save(); return; }
     if (c == 9) { tool_rename(); return; }
     if (c == 12) { tool_settings(); return; }
+    if (c == 14) { show_tutorial(); return; }
     if (c == 13) {
         if (confirm("SAIR", "Fechar o Save Manager Reis?")) { config_flush(); quitReq = 1; }
         return;
@@ -4782,7 +4855,7 @@ int main(int argc, char *argv[])
         }
 
         if (pad_new & PAD_L3) { tool_view(); continue; }
-        if ((pad_new & PAD_R3) && N > 0) { show_details(tab); continue; }
+        if (pad_new & PAD_R3) { show_tutorial(); continue; }
 
         if (N > 0) {
             int *c = &cursorPos[tab];

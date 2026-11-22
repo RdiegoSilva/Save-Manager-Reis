@@ -17,7 +17,8 @@ Gerenciador de saves com interface estilo dashboard.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
 - **Ferramentas do Memory Card** (START): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
 - **Ordenar, filtrar e buscar** (L3): ordem por Nome, Data, Tamanho ou Região; filtro por região (US, EU, JP, KR, Outras, PS1); busca por nome da pasta ou do jogo. Com filtro ativo, o quadro de saves mostra `exibidos/total`.
-- **Detalhes do save** (R3): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um (Memory Card, backups em Pasta e PSU).
+- **Tutorial** (R3 ou START → Tutorial): tela de ajuda com 3 páginas explicando cada botão, atalho, aba, formato e item do menu.
+- **Detalhes do save** (START → Detalhes do save): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um (Memory Card, backups em Pasta e PSU).
 - **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
 - **Cartões virtuais (VMC do OPL):** os saves de dentro dos arquivos `.bin` / `.ps2` / `.vmc` em `mass:/VMC/` aparecem na aba USB com a etiqueta **VMC**. Dá para importar para o Memory Card real e converter para Pasta, PSU ou MAX.
 - **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa), entram no backup e **podem ser restaurados** (a marca de save de PS1 é recriada; veja a seção abaixo).
@@ -79,7 +80,7 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Círculo | Atualizar a lista |
 | O (segurado) | Cancela exportar, importar, converter, copiar, verificar e criar VMC |
 | L3 | Ordenar / filtrar / buscar |
-| R3 | Detalhes do save selecionado |
+| R3 | Tutorial (o que cada botão faz) |
 | L1 / R1 | Trocar de aba (Memory Card / USB / Converter) |
 | SELECT | Atualizar tudo (reler Memory Card e USB) |
 | L2 | Trocar de Memory Card: slot 1 / 2, ou 1A–1D e 2A–2D com multitap |
