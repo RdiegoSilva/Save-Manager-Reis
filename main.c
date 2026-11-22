@@ -47,6 +47,7 @@
 #include "savefmt.h"
 #include "vmcfs.h"
 #include "sound.h"
+#include "btnicons.h"
 
 /* ---------------- IRX embutidos (gerados pelo Makefile) ---------------- */
 extern unsigned char iomanX_irx[];       extern unsigned int size_iomanX_irx;
@@ -363,10 +364,42 @@ static void fill_tri(float cx, float cy, int r, u64 c)
         rect(cx - i / 2, cy - r + i, 2 * (i / 2) + 1, 1, c);
 }
 
+/* ---- icones dos botoes como textura (btnicons.c). Se a VRAM nao der, cai no desenho por codigo ---- */
+static GSTEXTURE btnTex[4];
+static int       btnReady = 0;                   /* 0 = ainda nao enviada ao GS (reenvia apos limpar a VRAM) */
+
+static void btn_tex_init(void)
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        memset(&btnTex[i], 0, sizeof(GSTEXTURE));
+        btnTex[i].Width  = BTN_SZ;
+        btnTex[i].Height = BTN_SZ;
+        btnTex[i].PSM    = GS_PSM_CT32;
+        btnTex[i].Filter = GS_FILTER_LINEAR;
+        btnTex[i].Mem    = (void *)btn_rgba[i];
+        btnTex[i].Vram   = gsKit_vram_alloc(gsGlobal, gsKit_texture_size(BTN_SZ, BTN_SZ, GS_PSM_CT32), GSKIT_ALLOC_USERBUFFER);
+    }
+    btnReady = 0;
+}
+
 /* botao do controle (18x18): kind 0=X 1=quadrado 2=triangulo 3=circulo */
 static void pad_btn(float x, float y, int kind, u64 col)
 {
     int i;
+    if (kind >= 0 && kind < 4 && btnTex[kind].Vram != GSKIT_ALLOC_ERROR && btnTex[kind].Mem) {
+        if (!btnReady) {
+            FlushCache(0);
+            for (i = 0; i < 4; i++)
+                if (btnTex[i].Vram != GSKIT_ALLOC_ERROR) gsKit_texture_upload(gsGlobal, &btnTex[i]);
+            btnReady = 1;
+        }
+        gsKit_prim_sprite_texture(gsGlobal, &btnTex[kind],
+                                  VX(x - 1), VY(y - 1), 0.0f, 0.0f,
+                                  VX(x + 19), VY(y + 19), (float)BTN_SZ, (float)BTN_SZ, 1,
+                                  GS_SETREG_RGBAQ(0x80, 0x80, 0x80, 0x80, 0x00));
+        return;
+    }
     fill_circle(x + 9, y + 9, 9, col);
     switch (kind) {
     case 0:
@@ -522,6 +555,7 @@ static void video_apply(int mode)
     gsKit_fontm_upload(gsGlobal, font);              /* a VRAM foi limpa: reenvia a fonte e os slots de icone */
     font->Spacing = 0.62f;                           /* o upload zera o espacamento: refaz, como na abertura */
     icon_slots_init();
+    btn_tex_init();
     for (i = 0; i < ICON_SLOTS; i++) { slotOwner[i] = NULL; slotVer[i] = 0; }
     if (mode == VID_CRT) {
         vsc = 0.90f;                                 /* area segura: 90% da tela */
@@ -4686,6 +4720,7 @@ static void init_gfx(void)
     gsKit_fontm_upload(gsGlobal, font);
     font->Spacing = 0.62f;
     icon_slots_init();
+    btn_tex_init();
 
     gsKit_clear(gsGlobal, RGBA(0, 0, 0, 0x80));
 }
