@@ -3949,7 +3949,8 @@ static int export_cbs(const Entry *e, const char *stamp)
     const sceMcTblGetDir *raw = mc_raw(e->name);
     SvFile *sf;
     u8 *out;
-    u32 total = 0, olen = 0;
+    u32 total = 0;
+    uint32_t olen = 0;                              /* uint32_t: no EE e unsigned long (diferente de u32) */
     int i, n, nf = 0, k = 0, fd, ok = 1;
 
     snprintf(src, sizeof(src), "/%s/*", e->name);
