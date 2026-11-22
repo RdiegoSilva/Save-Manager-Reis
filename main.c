@@ -58,10 +58,13 @@ extern unsigned char bdmfs_fatfs_irx[];  extern unsigned int size_bdmfs_fatfs_ir
 extern unsigned char usbmass_bd_irx[];   extern unsigned int size_usbmass_bd_irx;
 extern unsigned char freesd_irx[];       extern unsigned int size_freesd_irx;
 extern unsigned char audsrv_irx[];       extern unsigned int size_audsrv_irx;
+#ifdef EMBED_MUSIC
+extern unsigned char musica_wav[];       extern unsigned int size_musica_wav;     /* musica embutida (musica.wav na pasta do projeto) */
+#endif
 
 /* ---------------- Constantes ---------------- */
 #define APP_NAME      "SAVE MANAGER REIS"
-#define APP_VERSION   "v1.3"
+#define APP_VERSION   "v1.4"
 #define ROOT_DIR      "mass:/SaveManagerReis"
 #define MAX_ENT       128
 #define CHUNK         (32 * 1024)
@@ -958,7 +961,7 @@ static void render(void)
             static const char *DS[13] = { "acha saves corrompidos", "apaga os saves marcados", "copia p/ o outro Memory Card", "troca o icone (BMP 128x128)",
                                           "todos os saves p/ o USB", "cartao ilegivel / corrompido", "apaga o cartao inteiro",
                                           "ordem, filtro e busca", "arquivos e tamanho do save", "nome do jogo, pasta ou backup",
-                                          "tenta salvar o save selecionado", "cartao virtual novo (OPL)", "som, video, hora, creditos" };
+                                          "tenta salvar o save selecionado", "cartao virtual novo (OPL)", "som, musica, video, hora" };
             text(bx + 20, ly - 8, 0.40f, C_MUTED, "Formatos: Pasta, PSU, MAX (compactado). Le tambem CBS, SPS, XPS e VMC.");
             text(bx + 20, ly + 8, 0.40f, C_MUTED, "Abas: Memory Card (cartao), USB (backups no pendrive), Converter.");
             for (k = 0; k < 13; k++) {
@@ -4141,19 +4144,34 @@ static void tool_new_vmc(void)
     }
 }
 
+/* ---------------- musica de fundo (mass:/SaveManagerReis/musica.wav) ---------------- */
+#define MUSIC_PATH ROOT_DIR "/musica.wav"
+static int musTried = 0;
+
+static void music_try_load(void)
+{
+    int r;
+    if (musTried || !usb_ready()) return;
+    musTried = 1;
+    r = snd_music_load(MUSIC_PATH);
+    if (r == -2)      toast_s("musica.wav invalida: use WAV de 16 bits (mono ou estereo)", 1);
+    else if (r == -3) toast_s("musica.wav grande demais (maximo 14 MB): converta p/ 22 kHz", 1);
+}
+
 /* ---------------- configuracoes (mass:/SaveManagerReis/config.ini) ---------------- */
 #define CFG_PATH ROOT_DIR "/config.ini"
-#define CFG_N 7
+#define CFG_N 9
 static int cfgSaved[CFG_N], cfgSeen[CFG_N], cfgStable = 0, cfgLoaded = 0;
 
 static void cfg_cur(int *v)
 {
     v[0] = snd_enabled(); v[1] = sortMode; v[2] = expFmt; v[3] = convFmt; v[4] = mcSlot; v[5] = tab; v[6] = vidMode;
+    v[7] = snd_music_enabled(); v[8] = snd_music_volume();
 }
 
 static void config_save(void)
 {
-    char b[200];
+    char b[256];
     int v[CFG_N], fd, n;
     cfg_cur(v);
     memcpy(cfgSaved, v, sizeof(v));                          /* mesmo se falhar: nao tenta de novo sem mudanca */
@@ -4163,8 +4181,8 @@ static void config_save(void)
     if (fd < 0) return;
     n = snprintf(b, sizeof(b),
                  "; Save Manager Reis - configuracoes (gravado automaticamente)\n"
-                 "sound=%d\nsort=%d\nexport_format=%d\nconvert_format=%d\nslot=%d\ntab=%d\nvideo=%d\n",
-                 v[0], v[1], v[2], v[3], v[4], v[5], v[6]);
+                 "sound=%d\nsort=%d\nexport_format=%d\nconvert_format=%d\nslot=%d\ntab=%d\nvideo=%d\nmusic=%d\nmusvol=%d\n",
+                 v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
     if (n > 0) write(fd, b, (size_t)n);
     close(fd);
 }
@@ -4193,6 +4211,8 @@ static void config_load_apply(int rebuild)
                     else if (!strcmp(key, "slot")           && val >= 0 && val < nCards)   mcSlot = val;
                     else if (!strcmp(key, "tab")            && val >= 0 && val <= 2)       tab = val;
                     else if (!strcmp(key, "video")          && val >= 0 && val <= 2)       wantVid = val;
+                    else if (!strcmp(key, "music"))          snd_music_set(val != 0);
+                    else if (!strcmp(key, "musvol")         && val >= 0 && val <= 10)      snd_music_volume_set(val);
                 }
                 while (*p && *p != '\n') p++;
                 if (*p) p++;
@@ -4204,6 +4224,7 @@ static void config_load_apply(int rebuild)
     cfg_cur(cfgSaved);
     memcpy(cfgSeen, cfgSaved, sizeof(cfgSaved));
     cfgStable = 0;
+    music_try_load();                                        /* o USB ja esta pronto: carrega a musica (uma vez) */
     if (rebuild) {
         if (sortMode != oldSort) view_apply_all();
         if (mcSlot != oldSlot) refresh_mc();
@@ -4644,18 +4665,30 @@ static void show_credits(void)
 static void tool_settings(void)
 {
     for (;;) {
-        char l0[40], l1[56];
-        const char *it[5];
+        char l0[40], l1[56], l2[40], l3[56];
+        const char *it[7];
         int c;
         snprintf(l0, sizeof(l0), "Som: %s", snd_enabled() ? "Ligado" : "Desligado");
-        snprintf(l1, sizeof(l1), "Modo de video: %s", VID_NAME[vidMode]);
-        it[0] = l0; it[1] = l1; it[2] = "Acertar data e hora"; it[3] = "Creditos"; it[4] = "Voltar";
-        c = menu_run("AJUSTES", it, 5);
-        if (c < 0 || c == 4) return;
+        if (!snd_music_present()) snprintf(l1, sizeof(l1), "Musica: sem arquivo (musica.wav)");
+        else                      snprintf(l1, sizeof(l1), "Musica: %s", snd_music_enabled() ? "Ligada" : "Desligada");
+        snprintf(l2, sizeof(l2), "Volume da musica: %d/10", snd_music_volume());
+        snprintf(l3, sizeof(l3), "Modo de video: %s", VID_NAME[vidMode]);
+        it[0] = l0; it[1] = l1; it[2] = l2; it[3] = l3; it[4] = "Acertar data e hora"; it[5] = "Creditos"; it[6] = "Voltar";
+        c = menu_run("AJUSTES", it, 7);
+        if (c < 0 || c == 6) return;
         if (c == 0)      { snd_set(!snd_enabled()); snd_play(SND_OK); }
-        else if (c == 1) tool_video();
-        else if (c == 2) tool_clock();
-        else if (c == 3) show_credits();
+        else if (c == 1) {
+            if (!snd_music_present()) {                          /* tenta carregar de novo (arquivo colocado depois) */
+                musTried = 0;
+                music_try_load();
+                if (!snd_music_present() && !ui.toastT) toast_s("musica.wav nao encontrada em SaveManagerReis", 1);
+            } else snd_music_set(!snd_music_enabled());
+            snd_play(SND_OK);
+        }
+        else if (c == 2) { snd_music_volume_set((snd_music_volume() + 2) % 12); snd_play(SND_SELECT); }   /* 0,2,4,...,10 */
+        else if (c == 3) tool_video();
+        else if (c == 4) tool_clock();
+        else if (c == 5) show_credits();
     }
 }
 
@@ -4674,7 +4707,7 @@ static void do_mc_tools(void)
         "Renomear (nome do jogo, pasta ou backup)",
         "Recuperar save selecionado (corrompido)",
         "Criar cartao virtual novo (VMC)",
-        "Ajustes (som, video, data e hora, creditos)",
+        "Ajustes (som, musica, video, data e hora, creditos)",
         "Sair do aplicativo",
         "Tutorial: o que cada botao faz"
     };
@@ -4768,6 +4801,9 @@ static void init_iop(void)
     padInit(0);
     padPortOpen(0, 0, padbuf);
     snd_init();
+#ifdef EMBED_MUSIC
+    snd_music_embed(musica_wav, size_musica_wav);          /* toca desde o inicio, sem precisar do pendrive */
+#endif
 }
 
 static void init_gfx(void)

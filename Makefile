@@ -16,7 +16,16 @@ EE_LDFLAGS += -L$(PS2DEV)/gsKit/lib
 all: $(EE_BIN)
 
 clean:
-	rm -f $(EE_BIN) $(EE_OBJS) *_irx.c
+	rm -f $(EE_BIN) $(EE_OBJS) *_irx.c musica_wav.c
+
+# --- musica embutida: se existir musica.wav ao lado deste Makefile, ela entra no ELF ---
+ifneq ($(wildcard musica.wav),)
+EE_OBJS   += musica_wav.o
+EE_CFLAGS += -DEMBED_MUSIC
+
+musica_wav.c: musica.wav
+	$(PS2SDK)/bin/bin2c $< $@ musica_wav
+endif
 
 # --- IRX embutidos no ELF ---
 iomanX_irx.c: $(PS2SDK)/iop/irx/iomanX.irx

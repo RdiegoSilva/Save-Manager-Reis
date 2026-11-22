@@ -163,6 +163,23 @@ Qualquer editor exporta isso (no Paint: Salvar como → BMP de 24 bits; no GIMP:
 
 O app troca a textura do ícone (o modelo 3D continua o mesmo) nos arquivos de ícone citados no `icon.sys`. O arquivo original é guardado antes em `SaveManagerReis/icones/originais/<SAVE>/` (só na primeira troca), então dá para restaurar copiando de volta para o save.
 
+## Música de fundo
+
+Coloque um arquivo chamado **`musica.wav`** em `mass:/SaveManagerReis/` (no pendrive/HD USB). Ao abrir o app com o USB conectado, ele é carregado e toca em **loop**; os efeitos sonoros entram por cima, sem cortar a música.
+
+- Formato: **WAV PCM de 16 bits**, mono ou estéreo, qualquer taxa. O arquivo é lido inteiro para a RAM, com limite de **14 MB** (use 22 kHz para músicas mais longas: ~5 MB por minuto em 22 kHz estéreo é um bom ponto de partida).
+- Converter com o ffmpeg: `ffmpeg -i minha_musica.mp3 -ar 22050 -ac 2 -c:a pcm_s16le musica.wav`
+- **START → Ajustes**: liga/desliga a música, ajusta o volume (0 a 10) e recarrega o arquivo se ele foi colocado depois. A escolha fica salva no `config.ini`.
+- Sem o arquivo, o app funciona normalmente, só com os efeitos.
+
+### Música embutida no ELF (sem pendrive)
+
+Coloque o `musica.wav` na **pasta do projeto**, ao lado do `Makefile`, e compile (`./build.sh`). Se o arquivo existir, o Makefile o embute no `SaveManagerReis.elf` e a música toca desde a abertura, sem precisar do pendrive. Sem o arquivo na pasta, o projeto compila normalmente, sem música embutida.
+
+- O ELF fica maior (o tamanho do WAV é somado a ele). Mantenha o WAV abaixo de uns 10 MB.
+- Se também houver um `musica.wav` em `SaveManagerReis/` no pendrive, ele **substitui** a música embutida.
+- Para trocar a música embutida é preciso compilar de novo.
+
 ## Som
 
 Efeitos sonoros gerados pelo próprio programa (sem arquivos de áudio): clique ao mover o cursor, ao marcar, ao trocar de aba, ao confirmar/voltar, aviso de sucesso, aviso de erro e um som de abertura. Para desligar: START → **Ajustes → Som**.
