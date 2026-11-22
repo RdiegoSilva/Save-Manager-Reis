@@ -16,7 +16,8 @@ Gerenciador de saves com interface estilo dashboard.
 - Espaço livre do Memory Card no quadro **LIVRE** (amarelo abaixo de 1 MB, vermelho abaixo de 256 KB); se faltar espaço ao importar, o aviso mostra quanto precisa e quanto há livre.
 - Relógio do console no topo, barra de progresso, avisos de sucesso/falha.
 - **Ferramentas do Memory Card** (START): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
-- **Ordenar, filtrar e buscar** (L3): ordem por Nome, Data, Tamanho ou Região; filtro por região (US, EU, JP, KR, Outras, PS1); busca por nome da pasta ou do jogo. Com filtro ativo, o quadro de saves mostra `exibidos/total`.
+- **Visão em lista ou grade** (**L3**): alterna entre os cards em grade e uma lista de uma linha por save (ícone, nome, pasta, formato, tamanho e data). Na lista, Esq/Dir pulam uma página. A escolha fica salva no `config.ini`.
+- **Ordenar, filtrar e buscar** (START → Organizar): ordem por Nome, Data, Tamanho ou Região; filtro por região (US, EU, JP, KR, Outras, PS1); busca por nome da pasta ou do jogo. Com filtro ativo, o quadro de saves mostra `exibidos/total`.
 - **Tutorial** (START → Tutorial): tela de ajuda com 3 páginas explicando cada botão, atalho, aba, formato e item do menu.
 - **Detalhes do save** (R3): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um, com o **ícone do jogo** ao lado do título (o ícone 3D girando, quando o save tem; senão o ícone da região) (Memory Card, backups em Pasta e PSU).
 - **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
@@ -79,7 +80,7 @@ Exportar o mesmo save várias vezes nunca sobrescreve backups antigos.
 | Triângulo | Exportar (aba Memory Card) / Importar (aba USB) |
 | Círculo | Atualizar a lista |
 | O (segurado) | Cancela exportar, importar, converter, copiar, verificar e criar VMC |
-| L3 | Ordenar / filtrar / buscar |
+| L3 | Alternar grade / lista |
 | R3 | Detalhes do save selecionado |
 | L1 / R1 | Trocar de aba (Memory Card / USB / Converter) |
 | SELECT | Atualizar tudo (reler Memory Card e USB) |
@@ -150,7 +151,7 @@ Limites: ele recupera o que o cartão ainda consegue ler e corrige a estrutura d
 
 ## Filtro e busca
 
-**L3** (ou START → Organizar / filtrar / buscar). A busca abre o **teclado na tela** (o mesmo usado para nomes de save, backup e VMC): o direcional move o cursor, **X** digita a tecla, **Quadrado** apaga, **Triângulo** põe espaço, **L1/R1** alternam maiúsculas e minúsculas (o teclado abre em maiúsculas), **START** confirma e **O** cancela. Embaixo da grade há botões para Aa, espaço, apagar, limpar, OK e cancelar. A busca olha o nome da pasta e o nome do jogo, sem diferenciar maiúsculas. O backup de tudo ignora filtro e busca.
+**START → Organizar / filtrar / buscar**. A busca abre o **teclado na tela** (o mesmo usado para nomes de save, backup e VMC): o direcional move o cursor, **X** digita a tecla, **Quadrado** apaga, **Triângulo** põe espaço, **L1/R1** alternam maiúsculas e minúsculas (o teclado abre em maiúsculas), **START** confirma e **O** cancela. Embaixo da grade há botões para Aa, espaço, apagar, limpar, OK e cancelar. A busca olha o nome da pasta e o nome do jogo, sem diferenciar maiúsculas. O backup de tudo ignora filtro e busca.
 
 ## Ícone personalizado
 
@@ -240,4 +241,4 @@ Ao trocar, o app mostra "Manter este modo?" com contagem de 10 segundos: **X** m
 
 ## Configurações
 
-O app grava `mass:/SaveManagerReis/config.ini` sozinho, cerca de 1,5 segundo depois de você mudar algo, e lê o arquivo ao abrir (se o pendrive estiver conectado). Guarda: som, ordem da lista, formato de exportação, formato de conversão, slot do Memory Card, aba e modo de vídeo. Filtro e busca **não** são guardados (para a lista não abrir "vazia"). Para voltar ao padrão, apague o arquivo.
+O app grava `mass:/SaveManagerReis/config.ini` sozinho, cerca de 1,5 segundo depois de você mudar algo, e lê o arquivo ao abrir (se o pendrive estiver conectado). Guarda: som, ordem da lista, formato de exportação, formato de conversão, slot do Memory Card, aba, modo de vídeo e visão (grade/lista). Filtro e busca **não** são guardados (para a lista não abrir "vazia"). Para voltar ao padrão, apague o arquivo.

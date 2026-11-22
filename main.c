@@ -162,6 +162,8 @@ static void card_name(int i, char *b, int n)
     else            snprintf(b, n, "%d", cardPort[i] + 1);
 }
 static int   cursorPos[4], topRow[4];
+static int   listMode = 0;                            /* 0 = grade de cards (4 colunas), 1 = lista (1 por linha) */
+#define COLS (listMode ? 1 : 4)
 static u32   frameNo;
 
 static sceMcTblGetDir mctbl[MAX_ENT]  __attribute__((aligned(64)));
@@ -689,6 +691,58 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     }
 }
 
+/* uma linha da visao em lista: icone pequeno, nome do jogo / pasta, formato, tamanho e data */
+static void draw_row(float x, float y, float w, float h, const Entry *e, int isCur, int isUsb, const Icon *ic, int slot)
+{
+    char buf[96], dt[48], sz[24];
+    int r = ent_region(e);
+    float rx = x + w - 10;
+
+    if (isCur) {
+        int p = (int)(frameNo % 60), a = p < 30 ? p : 60 - p;
+        rect(x - 2, y - 2, w + 4, h + 4, RGBA(0, 140 + a * 4, 255, 0x80));
+    }
+    panel(x, y, w, h, e->sel ? RGBA(32, 96, 116, 0x80) : RGBA(41, 46, 88, 0x80),
+                      e->sel ? RGBA(22, 66, 84, 0x80)  : RGBA(26, 29, 59, 0x80));
+    rect(x, y, 3, h, isUsb ? C_ACC2 : reg_col(r));
+
+    rect(x + 6, y + 2, h - 4, h - 4, RGBA(0, 0, 0, 0x3C));              /* icone */
+    if (ic) {
+        draw_icon(slot, ic, x + 7, y + 3, h - 6);
+    } else {
+        vgrad(x + 7, y + 3, h - 6, h - 6, reg_col(r), RGBA(20, 22, 50, 0x80));
+        ctext(x + 7 + (h - 6) / 2, y + 7, 0.5f, C_TXT, REG_TAG[r]);
+    }
+    if (e->sel) {
+        rect(x + h - 8, y + h - 14, 16, 12, C_GREEN);
+        ctext(x + h, y + h - 13, 0.30f, C_DARK, "OK");
+    }
+
+    snprintf(dt, sizeof(dt), "%s %s", e->date, e->time);
+    fmt_size(sz, sizeof(sz), e->size);
+    text(rx - tw(dt, 0.42f), y + 8, 0.42f, C_MUTED, dt);
+    rx -= 150;
+    text(rx - tw(sz, 0.46f), y + 8, 0.46f, C_ACC, sz);
+    rx -= 66;
+    if (isUsb && e->kind != FMT_DIR) {
+        const char *tg = FMT_NAME[e->kind];
+        text(rx - tw(tg, 0.42f), y + 8, 0.42f, C_ACC2, tg);
+    }
+    rx -= 56;
+    {
+        float nx = x + h + 8, mw = rx - nx;
+        if (e->title[0]) {
+            fit(buf, e->title, mw, 0.46f);
+            text_sh(nx, y + 3, 0.46f, C_TXT, buf);
+            fit(buf, e->name, mw, 0.30f);
+            text(nx, y + 17, 0.30f, C_MUTED, buf);
+        } else {
+            fit(buf, e->name, mw, 0.48f);
+            text_sh(nx, y + 8, 0.48f, C_TXT, buf);
+        }
+    }
+}
+
 static void render(void)
 {
     const float W = (float)gsGlobal->Width, H = (float)gsGlobal->Height;
@@ -818,29 +872,34 @@ static void render(void)
         ctext(M + 40, 168, 0.9f, C_MUTED, "?");
         if (tab == TAB_MC) {
             ctext(W / 2, 160, 0.75f, C_TXT, mcReady ? (mcFullN > 0 ? "Nenhum save corresponde ao filtro" : "Nenhum save neste Memory Card") : (mcNoFmt ? "Cartao nao formatado ou corrompido" : "Insira um Memory Card"));
-            ctext(W / 2, 200, 0.48f, C_MUTED, mcFullN > 0 ? "L3 abre o menu de filtros e busca" : "L2 troca o Memory Card");
+            ctext(W / 2, 200, 0.48f, C_MUTED, mcFullN > 0 ? "START > Organizar abre o menu de filtros e busca" : "L2 troca o Memory Card");
         } else {
             ctext(W / 2, 160, 0.75f, C_TXT, usbOk ? (usbFullN > 0 ? "Nenhum backup corresponde ao filtro" : "Nenhum backup ainda") : "Conecte um pendrive / HD USB");
-            ctext(W / 2, 200, 0.48f, C_MUTED, usbOk ? (usbFullN > 0 ? "L3 abre o menu de filtros e busca" : "Exporte um save, coloque .psu .max .cbs .sps .xps em SaveManagerReis ou VMCs em mass:/VMC") : "Depois pressione O para atualizar");
+            ctext(W / 2, 200, 0.48f, C_MUTED, usbOk ? (usbFullN > 0 ? "START > Organizar abre o menu de filtros e busca" : "Exporte um save, coloque .psu .max .cbs .sps .xps em SaveManagerReis ou VMCs em mass:/VMC") : "Depois pressione O para atualizar");
         }
     } else {
-        const float gap = 10, vgap = 8, top = 130, ch = 78;
+        const float gap = 10, vgap = listMode ? 3 : 8, top = 130, ch = listMode ? 30 : 78;
         const float cw = (W - 2 * M - 3 * gap) / 4.0f;
+        int cols = COLS;
         int rows = (int)((H - 58 - top + vgap) / (ch + vgap));
-        int cur = cursorPos[tab], curRow = cur / 4, first, last;
+        int cur = cursorPos[tab], curRow = cur / cols, first, last;
         if (rows < 1) rows = 1;
+        if (rows > 16) rows = 16;
         gridRows = rows;
         if (curRow < topRow[tab]) topRow[tab] = curRow;
         if (curRow >= topRow[tab] + rows) topRow[tab] = curRow - rows + 1;
-        first = topRow[tab] * 4;
-        last  = (topRow[tab] + rows) * 4;
+        first = topRow[tab] * cols;
+        last  = (topRow[tab] + rows) * cols;
         if (last > N) last = N;
         for (i = first; i < last; i++) {
-            int r = i / 4 - topRow[tab], c = i % 4;
-            draw_card(M + c * (cw + gap), top + r * (ch + vgap), cw, ch, &L[i], i == cur, tab != TAB_MC, tab < 2 ? icons[tab][i] : NULL, i - first);
+            int r = i / cols - topRow[tab], c = i % cols;
+            if (listMode)
+                draw_row(M, top + r * (ch + vgap), W - 2 * M - 12, ch, &L[i], i == cur, tab != TAB_MC, tab < 2 ? icons[tab][i] : NULL, i - first);
+            else
+                draw_card(M + c * (cw + gap), top + r * (ch + vgap), cw, ch, &L[i], i == cur, tab != TAB_MC, tab < 2 ? icons[tab][i] : NULL, i - first);
         }
         {
-            int totalRows = (N + 3) / 4;
+            int totalRows = (N + cols - 1) / cols;
             if (totalRows > rows) {
                 float th = rows * (ch + vgap) - vgap, bh = th * rows / totalRows;
                 rect(W - 14, top, 4, th, C_CARD);
@@ -872,6 +931,7 @@ static void render(void)
         snprintf(fl, sizeof(fl), "Formato: %s", FMT_NAME[expFmt]);
         x = key_pill(x, H - 30, "R2", fl);
     }
+    x = key_pill(x, H - 30, "L3", listMode ? "Grade" : "Lista");
     x = key_pill(x, H - 30, "L2", "Slot");
     x = key_pill(x, H - 30, "SELECT", "Atualizar");
     if (tab == TAB_CONV) {
@@ -957,11 +1017,11 @@ static void render(void)
             tut_key(bx, ly, "R2",     "Muda o formato de exportacao (Converter: destino)"); ly += 30;
             tut_key(bx, ly, "SELECT", "Atualiza as listas do cartao e do USB");            ly += 30;
             tut_key(bx, ly, "START",  "Abre o menu de ferramentas");                       ly += 30;
-            tut_key(bx, ly, "L3",     "Ordenar, filtrar por regiao e buscar saves");       ly += 30;
+            tut_key(bx, ly, "L3",     "Alterna a visao: grade de cards / lista");       ly += 30;
             tut_key(bx, ly, "R3",     "Detalhes do save (arquivos e tamanhos)");
         } else {
             static const char *NM[13] = { "Verificar", "Apagar", "Copiar", "Icone", "Backup de tudo", "Recuperar cartao", "Formatar",
-                                          "Organizar (L3)", "Detalhes", "Renomear", "Recuperar save", "Criar VMC", "Ajustes" };
+                                          "Organizar", "Detalhes", "Renomear", "Recuperar save", "Criar VMC", "Ajustes" };
             static const char *DS[13] = { "acha saves corrompidos", "apaga os saves marcados", "copia p/ o outro Memory Card", "troca o icone (BMP 128x128)",
                                           "todos os saves p/ o USB", "cartao ilegivel / corrompido", "apaga o cartao inteiro",
                                           "ordem, filtro e busca", "arquivos e tamanho do save", "nome do jogo, pasta ou backup",
@@ -1899,7 +1959,7 @@ static Icon *icon_load(int isUsb, const Entry *e)
 /* carrega 1 icone por quadro (o do cursor primeiro, depois os visiveis) */
 static void icon_pump(int t, Entry *L, int N)
 {
-    int first = topRow[t] * 4, last = first + gridRows * 4, i, c = cursorPos[t];
+    int first = topRow[t] * COLS, last = first + gridRows * COLS, i, c = cursorPos[t];
     if (last > N) last = N;
     if (c >= first && c < last && !icons[t][c] && !iconFail[t][c]) i = c;
     else {
@@ -2093,7 +2153,7 @@ static void title_load(int isUsb, Entry *e)
 /* le 1 titulo por quadro (o do cursor primeiro, depois os visiveis) */
 static void title_pump(int t, Entry *L, int N)
 {
-    int first = topRow[t] * 4, last = first + gridRows * 4, i, c = cursorPos[t];
+    int first = topRow[t] * COLS, last = first + gridRows * COLS, i, c = cursorPos[t];
     if (last > N) last = N;
     if (c >= first && c < last && !L[c].titleDone) i = c;
     else {
@@ -4211,13 +4271,13 @@ static void music_try_load(void)
 
 /* ---------------- configuracoes (mass:/SaveManagerReis/config.ini) ---------------- */
 #define CFG_PATH ROOT_DIR "/config.ini"
-#define CFG_N 9
+#define CFG_N 10
 static int cfgSaved[CFG_N], cfgSeen[CFG_N], cfgStable = 0, cfgLoaded = 0;
 
 static void cfg_cur(int *v)
 {
     v[0] = snd_enabled(); v[1] = sortMode; v[2] = expFmt; v[3] = convFmt; v[4] = mcSlot; v[5] = tab; v[6] = vidMode;
-    v[7] = snd_music_enabled(); v[8] = snd_music_volume();
+    v[7] = snd_music_enabled(); v[8] = snd_music_volume(); v[9] = listMode;
 }
 
 static void config_save(void)
@@ -4232,8 +4292,8 @@ static void config_save(void)
     if (fd < 0) return;
     n = snprintf(b, sizeof(b),
                  "; Save Manager Reis - configuracoes (gravado automaticamente)\n"
-                 "sound=%d\nsort=%d\nexport_format=%d\nconvert_format=%d\nslot=%d\ntab=%d\nvideo=%d\nmusic=%d\nmusvol=%d\n",
-                 v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8]);
+                 "sound=%d\nsort=%d\nexport_format=%d\nconvert_format=%d\nslot=%d\ntab=%d\nvideo=%d\nmusic=%d\nmusvol=%d\nlist=%d\n",
+                 v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7], v[8], v[9]);
     if (n > 0) write(fd, b, (size_t)n);
     close(fd);
 }
@@ -4264,6 +4324,7 @@ static void config_load_apply(int rebuild)
                     else if (!strcmp(key, "video")          && val >= 0 && val <= 2)       wantVid = val;
                     else if (!strcmp(key, "music"))          snd_music_set(val != 0);
                     else if (!strcmp(key, "musvol")         && val >= 0 && val <= 10)      snd_music_volume_set(val);
+                    else if (!strcmp(key, "list")           && val >= 0 && val <= 1)       listMode = val;
                 }
                 while (*p && *p != '\n') p++;
                 if (*p) p++;
@@ -4785,7 +4846,7 @@ static void do_mc_tools(void)
         "Backup de tudo para USB (escolher formato)",
         "Recuperar cartao ilegivel / corrompido",
         "Formatar Memory Card",
-        "Organizar / filtrar / buscar  (L3)",
+        "Organizar / filtrar / buscar",
         "Detalhes do save  (R3)",
         "Renomear (nome do jogo, pasta ou backup)",
         "Recuperar save selecionado (corrompido)",
@@ -4974,16 +5035,25 @@ int main(int argc, char *argv[])
             if (tab != ot) snd_play(SND_TAB);
         }
 
-        if (pad_new & PAD_L3) { tool_view(); continue; }
+        if (pad_new & PAD_L3) {                              /* L3 alterna entre grade e lista */
+            int t;
+            listMode = !listMode;
+            for (t = 0; t < 3; t++) topRow[t] = 0;           /* o render reposiciona para mostrar o cursor */
+            snd_play(SND_TAB);
+            snprintf(ui.toast, sizeof(ui.toast), "Visao: %s", listMode ? "Lista" : "Grade de cards");
+            ui.toastErr = 0; ui.toastT = 90;
+            continue;
+        }
         if ((pad_new & PAD_R3) && N > 0) { show_details(tab); continue; }
 
         if (N > 0) {
             int *c = &cursorPos[tab];
             int oc = *c;
-            if (pad_new & PAD_RIGHT) { if (*c < N - 1) (*c)++; }
-            if (pad_new & PAD_LEFT)  { if (*c > 0) (*c)--; }
-            if (pad_new & PAD_DOWN)  { *c += 4; if (*c > N - 1) *c = N - 1; }
-            if (pad_new & PAD_UP)    { *c -= 4; if (*c < 0) *c = 0; }
+            int step = listMode ? 1 : 4, side = listMode ? gridRows : 1;       /* lista: Esq/Dir pulam uma pagina */
+            if (pad_new & PAD_RIGHT) { *c += side; if (*c > N - 1) *c = N - 1; }
+            if (pad_new & PAD_LEFT)  { *c -= side; if (*c < 0) *c = 0; }
+            if (pad_new & PAD_DOWN)  { *c += step; if (*c > N - 1) *c = N - 1; }
+            if (pad_new & PAD_UP)    { *c -= step; if (*c < 0) *c = 0; }
             if (*c != oc) snd_play(SND_MOVE);
             if (pad_new & PAD_CROSS) { L[*c].sel = !L[*c].sel; snd_play(SND_SELECT); }
             if (pad_new & PAD_SQUARE) {
