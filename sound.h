@@ -12,6 +12,7 @@ void snd_play(int id);        /* nao bloqueia; ignora se o som estiver desligado
 void snd_update(void);        /* chame uma vez por quadro (mistura musica + efeitos e alimenta o audsrv) */
 void snd_set(int on);         /* liga/desliga os EFEITOS */
 int  snd_enabled(void);
+void snd_boost(int on);        /* 1 = operacao longa (enche mais a fila de audio); 0 = normal */
 
 /* musica de fundo: WAV PCM de 8 ou 16 bits, mono ou estereo, qualquer taxa. Pode vir embutida no ELF
  * (musica.wav na pasta do projeto) ou de mass:/SaveManagerReis/musica.wav (esta substitui a embutida). */

@@ -21,13 +21,13 @@
 
 #define OUT_RATE        22050
 #define TAIL_MS         120                    /* silencio no fim de cada efeito */
-#define MIX_FRAMES      1024                   /* maximo de quadros de audio por envio */
+#define MIX_FRAMES      2048                   /* maximo de quadros de audio por envio */
 #define MUSIC_MAX_BYTES (14 * 1024 * 1024)
 
 static short *buf[SND_COUNT];                  /* efeitos: estereo, OUT_RATE */
 static int    flen[SND_COUNT];                 /* tamanho em quadros (amostras por canal) */
 static int    ready = 0, on = 1;
-static int    bufCap = 16384, targetBytes = 8192, tail = 0;
+static int    bufCap = 16384, targetBytes = 8192, normTarget = 8192, tail = 0;
 
 /* efeito em reproducao */
 static int    cur = -1, curPos = 0, curPrio = 0;
@@ -139,6 +139,7 @@ void snd_init(void)
     targetBytes = bufCap / 2;                            /* ~90 ms de audio na fila (menos latencia nos efeitos) */
     if (targetBytes > 8192) targetBytes = 8192;
     if (targetBytes < 2048) targetBytes = 2048;
+    normTarget = targetBytes;
     audsrv_set_volume(MAX_VOLUME / 2 + MAX_VOLUME / 4);  /* 75%: evita saturar o amplificador */
 
     for (id = 0; id < SND_COUNT; id++) ok &= synth(id);
@@ -222,6 +223,14 @@ void snd_set(int v)
 }
 
 int snd_enabled(void) { return on; }
+
+/* operacao longa (o quadro demora): enche mais a fila do audsrv para a musica nao falhar. 0 = volta ao normal */
+void snd_boost(int b)
+{
+    if (!ready) return;
+    targetBytes = b ? (bufCap - 1024) : normTarget;
+    if (targetBytes < normTarget) targetBytes = normTarget;
+}
 
 /* ---------------- musica de fundo ---------------- */
 static unsigned rd32(const unsigned char *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((unsigned)p[3] << 24); }

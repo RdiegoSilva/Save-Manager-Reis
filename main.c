@@ -68,7 +68,7 @@ extern unsigned char musica_wav[];       extern unsigned int size_musica_wav;   
 #define APP_VERSION   "v2.0"
 #define ROOT_DIR      "mass:/SaveManagerReis"
 #define MAX_ENT       128
-#define CHUNK         (32 * 1024)
+#define CHUNK         (8 * 1024)           /* pequeno: a cada pedaco o quadro (e o audio) segue em frente */
 #define MC_ATTR_DIR   0x0020
 /* flags do mcOpen (valores do IOP, diferentes dos do newlib) */
 #define MC_RDONLY     0x0001
@@ -172,6 +172,19 @@ static u32   frameNo;
 static sceMcTblGetDir mctbl[MAX_ENT]  __attribute__((aligned(64)));
 static sceMcTblGetDir subtbl[MAX_ENT] __attribute__((aligned(64)));
 static u8   iobuf[CHUNK]              __attribute__((aligned(64)));
+
+/* espera o Memory Card terminar, mas sem travar o audio: enquanto espera, alimenta o audsrv */
+static int mc_sync_wait(int *res)
+{
+    int cmd = 0, rc, polls = 0;
+    while (polls < 40000) {
+        rc = mcSync(1, &cmd, res);                      /* 1 = terminou, 0 = executando, -1 = nada em execucao */
+        if (rc == 1) return rc;
+        if (rc != 0) break;
+        if ((++polls & 127) == 0) snd_update();
+    }
+    return mcSync(0, &cmd, res);                        /* demorou demais ou estado estranho: espera de forma normal */
+}
 static char padbuf[256]               __attribute__((aligned(64)));
 
 static int quitReq = 0;
@@ -1334,6 +1347,7 @@ static void present(void)
 
 static void progress(const char *msg, u32 done, u32 total)
 {
+    snd_boost(1);                                      /* operacao longa: enche mais a fila de audio */
     cancel_poll();
     ui.done = done; ui.total = total;
     snprintf(ui.msg, sizeof(ui.msg), "%s", msg);
@@ -1449,7 +1463,7 @@ static int mc_list(int slot, const char *pat, sceMcTblGetDir *tbl, int max)
 {
     int n = 0;
     mcGetDir(MP(slot), MS(slot), (char *)pat, 0, max, tbl);
-    mcSync(0, NULL, &n);
+    mc_sync_wait(&n);
     return n < 0 ? 0 : n;
 }
 
@@ -1457,9 +1471,9 @@ static void mc_check(void)
 {
     int type, freec, fmt, ret = -10;
     mcGetInfo(MP(mcSlot), MS(mcSlot), &type, &freec, &fmt);
-    mcSync(0, NULL, &ret);
+    mc_sync_wait(&ret);
     mcGetInfo(MP(mcSlot), MS(mcSlot), &type, &freec, &fmt);   /* 2a chamada: estabiliza apos troca de cartao */
-    mcSync(0, NULL, &ret);
+    mc_sync_wait(&ret);
     mcReady = (ret >= -1) && (ret != -2) ? 1 : 0;
     if (ret == -1) mcReady = (fmt != 0);
     mcNoFmt = (ret == -2) || (ret == -1 && fmt == 0);
@@ -1923,11 +1937,11 @@ static u8 *read_all(int isUsb, const char *path, int *outLen)
     u8 *buf = (u8 *)malloc(cap);
     if (!buf) return NULL;
     if (isUsb) fd = open(path, O_RDONLY);
-    else { mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY); mcSync(0, NULL, &fd); }
+    else { mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY); mc_sync_wait(&fd); }
     if (fd < 0) { free(buf); return NULL; }
     for (;;) {
         if (isUsb) r = read(fd, iobuf, CHUNK);
-        else { mcRead(fd, iobuf, CHUNK); mcSync(0, NULL, &r); }
+        else { mcRead(fd, iobuf, CHUNK); mc_sync_wait(&r); }
         if (r <= 0) break;
         if (len + r > cap) {
             u8 *nb;
@@ -1940,7 +1954,7 @@ static u8 *read_all(int isUsb, const char *path, int *outLen)
         len += r;
     }
     if (isUsb) close(fd);
-    else { mcClose(fd); mcSync(0, NULL, &r); }
+    else { mcClose(fd); mc_sync_wait(&r); }
     if (len <= 0) { free(buf); return NULL; }
     *outLen = len;
     return buf;
@@ -2690,20 +2704,20 @@ static int copy_mc_to_usb(const char *src, const char *dst, const char *label)
 {
     int fd = -1, r = 0, out, err = 0;
     mcOpen(MP(mcSlot), MS(mcSlot), src, MC_RDONLY);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) return -1;
     out = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (out < 0) { mcClose(fd); mcSync(0, NULL, &r); return -2; }
+    if (out < 0) { mcClose(fd); mc_sync_wait(&r); return -2; }
     for (;;) {
         mcRead(fd, iobuf, CHUNK);
-        mcSync(0, NULL, &r);
+        mc_sync_wait(&r);
         if (r <= 0) { if (r < 0) err = -3; break; }
         if (write(out, iobuf, r) != r) { err = -4; break; }
         g_done += r;
         progress(label, g_done, g_total);
     }
     close(out);
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return err;
 }
 
@@ -2713,19 +2727,19 @@ static int copy_usb_to_mc(const char *src, const char *dst, const char *label)
     in = open(src, O_RDONLY);
     if (in < 0) return -1;
     mcOpen(MP(mcSlot), MS(mcSlot), dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) { close(in); return -2; }
     for (;;) {
         r = read(in, iobuf, CHUNK);
         if (r <= 0) { if (r < 0) err = -3; break; }
         mcWrite(fd, iobuf, r);
-        mcSync(0, NULL, &w);
+        mc_sync_wait(&w);
         if (w != r) { err = -4; break; }
         g_done += r;
         progress(label, g_done, g_total);
     }
     close(in);
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return err;
 }
 
@@ -2769,7 +2783,7 @@ static int import_folder(const Entry *e)
 
     snprintf(dst, sizeof(dst), "/%s", e->name);
     mcMkDir(MP(mcSlot), MS(mcSlot), dst);
-    mcSync(0, NULL, &r);                    /* ja existir nao e erro: sobrescreve arquivos */
+    mc_sync_wait(&r);                    /* ja existir nao e erro: sobrescreve arquivos */
 
     snprintf(dir, sizeof(dir), ROOT_DIR "/%s/%s", e->name, e->stamp);
     d = opendir(dir);
@@ -2797,6 +2811,7 @@ static int wr_all(int fd, const void *buf, u32 n)
         int w = write(fd, p, n > CHUNK ? CHUNK : n);
         if (w <= 0) return -1;
         p += w; n -= (u32)w;
+        snd_update();                                  /* escrita no USB e demorada: mantem a musica alimentada */
     }
     return 0;
 }
@@ -2806,11 +2821,11 @@ static int mc_file_to_fd(const char *src, int out, const char *label)
 {
     int fd = -1, r = 0, total = 0;
     mcOpen(MP(mcSlot), MS(mcSlot), src, MC_RDONLY);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) return -1;
     for (;;) {
         mcRead(fd, iobuf, CHUNK);
-        mcSync(0, NULL, &r);
+        mc_sync_wait(&r);
         if (r < 0) { total = -1; break; }
         if (r == 0) break;
         if (wr_all(out, iobuf, (u32)r) != 0) { total = -1; break; }
@@ -2818,7 +2833,7 @@ static int mc_file_to_fd(const char *src, int out, const char *label)
         g_done += (u32)r;
         progress(label, g_done, g_total);
     }
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return total;
 }
 
@@ -2828,20 +2843,20 @@ static int mc_file_to_mem(const char *src, u8 *dst, u32 size, const char *label)
     int fd = -1, r = 0;
     u32 got = 0;
     mcOpen(MP(mcSlot), MS(mcSlot), src, MC_RDONLY);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) return -1;
     while (got < size) {
         u32 want = size - got;
         if (want > CHUNK) want = CHUNK;
         mcRead(fd, iobuf, (int)want);
-        mcSync(0, NULL, &r);
+        mc_sync_wait(&r);
         if (r <= 0) break;
         memcpy(dst + got, iobuf, (u32)r);
         got += (u32)r;
         g_done += (u32)r;
         progress(label, g_done, g_total);
     }
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return got == size ? 0 : -1;
 }
 
@@ -2851,20 +2866,20 @@ static int fd_to_mc(int in, u32 size, const char *dst, const char *label)
     int fd = -1, r, w = 0, err = 0;
     u32 left = size;
     mcOpen(MP(mcSlot), MS(mcSlot), dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) return -2;
     while (left) {
         u32 want = left > CHUNK ? CHUNK : left;
         r = read(in, iobuf, want);
         if (r <= 0) { err = -3; break; }
         mcWrite(fd, iobuf, r);
-        mcSync(0, NULL, &w);
+        mc_sync_wait(&w);
         if (w != r) { err = -4; break; }
         left -= (u32)r;
         g_done += (u32)r;
         progress(label, g_done, g_total);
     }
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return err;
 }
 
@@ -2882,7 +2897,7 @@ static int ps1_flag(int card, const char *name)
     if (n < 1) return 1;
     tbl.AttrFile = 0x9027;
     mcSetFileInfo(MP(card), MS(card), path, &tbl, 0xFEED);       /* 0xFEED: valor usado pelo uLaunchELF */
-    mcSync(0, NULL, &r);
+    mc_sync_wait(&r);
     return r < 0 ? 1 : 0;
 }
 
@@ -2891,20 +2906,20 @@ static int mem_to_mc(const u8 *src, u32 size, const char *dst, const char *label
     int fd = -1, w = 0, r, err = 0;
     u32 off = 0;
     mcOpen(MP(mcSlot), MS(mcSlot), dst, MC_WRONLY | MC_CREAT | MC_TRUNC);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) return -2;
     while (off < size) {
         u32 n = size - off;
         if (n > CHUNK) n = CHUNK;
         memcpy(iobuf, src + off, n);
         mcWrite(fd, iobuf, (int)n);
-        mcSync(0, NULL, &w);
+        mc_sync_wait(&w);
         if (w != (int)n) { err = -4; break; }
         off += n;
         g_done += n;
         progress(label, g_done, g_total);
     }
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return err;
 }
 
@@ -3171,7 +3186,7 @@ static int import_psu(const Entry *e)
 
     snprintf(dst, sizeof(dst), "/%s", e->name);
     mcMkDir(MP(mcSlot), MS(mcSlot), dst);
-    mcSync(0, NULL, &r);                         /* ja existir nao e erro */
+    mc_sync_wait(&r);                         /* ja existir nao e erro */
     snprintf(lbl, sizeof(lbl), "%s", e->name);
 
     while (read(fd, h, 512) == 512) {
@@ -3337,7 +3352,7 @@ static int import_max(const Entry *e)
 
     snprintf(dst, sizeof(dst), "/%s", e->name);
     mcMkDir(MP(mcSlot), MS(mcSlot), dst);
-    mcSync(0, NULL, &r);
+    mc_sync_wait(&r);
 
     for (k = 0; k < (int)nfiles; k++) {
         u32 sz;
@@ -3681,7 +3696,7 @@ static int pk_to_mc(const Entry *e)
     int i, r = 0, fails = 0;
     snprintf(dst, sizeof(dst), "/%s", e->name);
     mcMkDir(MP(mcSlot), MS(mcSlot), dst);
-    mcSync(0, NULL, &r);                         /* ja existir nao e erro */
+    mc_sync_wait(&r);                         /* ja existir nao e erro */
     for (i = 0; i < pk.n; i++) {
         snprintf(dst, sizeof(dst), "/%s/%s", e->name, pk.f[i].name);
         if (mem_to_mc(pk.f[i].data, pk.f[i].size, dst, e->name) < 0) fails++;
@@ -3834,16 +3849,16 @@ static int mc_read_check(const char *path, u32 expect)
     int fd = -1, r = 0;
     u32 total = 0;
     mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) return 0;
     for (;;) {
         mcRead(fd, iobuf, CHUNK);
-        mcSync(0, NULL, &r);
+        mc_sync_wait(&r);
         if (r < 0) { total = 0xFFFFFFFFu; break; }
         if (r == 0) break;
         total += (u32)r;
     }
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return total == expect;
 }
 
@@ -3886,13 +3901,13 @@ static int mc_delete_save(const char *name)
         if (subtbl[j].AttrFile & MC_ATTR_DIR) continue;
         snprintf(path, sizeof(path), "/%s/%s", name, (const char *)subtbl[j].EntryName);
         mcDelete(MP(mcSlot), MS(mcSlot), path);
-        mcSync(0, NULL, &r);
+        mc_sync_wait(&r);
         if (r < 0) fails++;
         if (delSpan) { g_done = delBase + delSpan * (u32)(j + 1) / (u32)(n + 1); progress(name, g_done, g_total); }
     }
     snprintf(path, sizeof(path), "/%s", name);
     mcDelete(MP(mcSlot), MS(mcSlot), path);
-    mcSync(0, NULL, &r);
+    mc_sync_wait(&r);
     if (r < 0) fails++;
     return fails;
 }
@@ -3901,7 +3916,7 @@ static int mc_format_card(void)
 {
     int r = 0;
     mcFormat(MP(mcSlot), MS(mcSlot));
-    mcSync(0, NULL, &r);
+    mc_sync_wait(&r);
     return r;
 }
 
@@ -3914,31 +3929,31 @@ static int mc_copy_save(const char *name, int srcPort, int dstPort, const char *
     n = mc_list(srcPort, pat, subtbl, MAX_ENT);
     snprintf(sp, sizeof(sp), "/%s", name);
     mcMkDir(MP(dstPort), MS(dstPort), sp);
-    mcSync(0, NULL, &r);                              /* ja existir nao e erro */
+    mc_sync_wait(&r);                              /* ja existir nao e erro */
     for (j = 0; j < n; j++) {
         int in = -1, out = -1, w = 0, err = 0;
         char f[96];
         if (subtbl[j].AttrFile & MC_ATTR_DIR) continue;
         snprintf(f, sizeof(f), "/%s/%s", name, (const char *)subtbl[j].EntryName);
         mcOpen(MP(srcPort), MS(srcPort), f, MC_RDONLY);
-        mcSync(0, NULL, &in);
+        mc_sync_wait(&in);
         if (in < 0) { fails++; continue; }
         mcOpen(MP(dstPort), MS(dstPort), f, MC_WRONLY | MC_CREAT | MC_TRUNC);
-        mcSync(0, NULL, &out);
-        if (out < 0) { mcClose(in); mcSync(0, NULL, &r); fails++; continue; }
+        mc_sync_wait(&out);
+        if (out < 0) { mcClose(in); mc_sync_wait(&r); fails++; continue; }
         for (;;) {
             mcRead(in, iobuf, CHUNK);
-            mcSync(0, NULL, &r);
+            mc_sync_wait(&r);
             if (r < 0) { err = 1; break; }
             if (r == 0) break;
             mcWrite(out, iobuf, r);
-            mcSync(0, NULL, &w);
+            mc_sync_wait(&w);
             if (w != r) { err = 1; break; }
             g_done += (u32)r;
             progress(label, g_done, g_total);
         }
-        mcClose(in);  mcSync(0, NULL, &r);
-        mcClose(out); mcSync(0, NULL, &r);
+        mcClose(in);  mc_sync_wait(&r);
+        mcClose(out); mc_sync_wait(&r);
         if (err) fails++;
     }
     return fails;
@@ -3949,9 +3964,9 @@ static int mc_port_ready(int port, int *freeKB)
 {
     int type, freec = 0, fmt = 0, ret = -10, ok;
     mcGetInfo(MP(port), MS(port), &type, &freec, &fmt);
-    mcSync(0, NULL, &ret);
+    mc_sync_wait(&ret);
     mcGetInfo(MP(port), MS(port), &type, &freec, &fmt);
-    mcSync(0, NULL, &ret);
+    mc_sync_wait(&ret);
     ok = (ret >= -1) && (ret != -2);
     if (ret == -1) ok = (fmt != 0);
     *freeKB = ok ? freec : 0;
@@ -5137,7 +5152,7 @@ static void tool_rename(void)
         snprintf(op, sizeof(op), "/%s", old);
         snprintf(np, sizeof(np), "/%s", nn);
         mcRename(MP(mcSlot), MS(mcSlot), op, np);
-        mcSync(0, NULL, &r);
+        mc_sync_wait(&r);
         refresh_mc();                                       /* confere pelo que o cartao realmente tem */
         if (mc_has(nn) && !mc_has(old)) toast_s("Save renomeado", 0);
         else                            toast_s("Falha ao renomear (o cartao nao aceitou)", 1);
@@ -5185,24 +5200,24 @@ static int salvage_file(const char *path, u8 *dst, u32 size, u32 *bad)
         int ok = 1;
         fd = -1;
         mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY);
-        mcSync(0, NULL, &fd);
+        mc_sync_wait(&fd);
         if (fd < 0) continue;
         got = 0;
         while (got < size) {
             n = size - got;
             if (n > CHUNK) n = CHUNK;
             mcRead(fd, iobuf, (int)n);
-            mcSync(0, NULL, &r);
+            mc_sync_wait(&r);
             if (r <= 0) { ok = 0; break; }
             memcpy(dst + got, iobuf, (size_t)r);
             got += (u32)r;
         }
-        mcClose(fd); mcSync(0, NULL, &r);
+        mcClose(fd); mc_sync_wait(&r);
         if (ok && got == size) return 0;
     }
     fd = -1;
     mcOpen(MP(mcSlot), MS(mcSlot), path, MC_RDONLY);
-    mcSync(0, NULL, &fd);
+    mc_sync_wait(&fd);
     if (fd < 0) return -1;
     memset(dst, 0, size);
     for (off = 0; off < size; off += SALV_CHUNK) {
@@ -5211,15 +5226,15 @@ static int salvage_file(const char *path, u8 *dst, u32 size, u32 *bad)
         if (n > SALV_CHUNK) n = SALV_CHUNK;
         for (tries = 0; tries < 3 && !ok; tries++) {
             mcSeek(fd, (int)off, 0);
-            mcSync(0, NULL, &r);
+            mc_sync_wait(&r);
             if (r < 0) continue;
             mcRead(fd, iobuf, (int)n);
-            mcSync(0, NULL, &r);
+            mc_sync_wait(&r);
             if (r == (int)n) { memcpy(dst + off, iobuf, n); ok = 1; }
         }
         if (!ok) { memset(dst + off, 0, n); *bad += n; }
     }
-    mcClose(fd); mcSync(0, NULL, &r);
+    mcClose(fd); mc_sync_wait(&r);
     return *bad ? 1 : 0;
 }
 
@@ -5625,6 +5640,7 @@ int main(int argc, char *argv[])
 
     for (;;) {
         read_pad();
+        snd_boost(0);                                  /* tela normal: fila curta (efeitos sem atraso) */
 
         config_poll();
 
