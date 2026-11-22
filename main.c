@@ -281,6 +281,7 @@ static int   dtN = 0, dtScroll = 0, dtOpen = 0;
 #define TUT_PAGES 3
 static int   tutOpen = 0, tutPage = 0;      /* tutorial (menu START) */
 static char  dtTitle[48], dtL[3][80], dtNote[80];
+static int   dtReg = 4;
 
 /* ---- modo de video: a interface e desenhada numa tela virtual (largura x altura do gsGlobal).
  * No modo "TV de tubo" ela e encolhida para a area segura (as TVs de tubo cortam as bordas);
@@ -485,7 +486,8 @@ static u64 reg_col(int r)
  *  Icones 3D dos saves (icon.sys + arquivo .ico) -> miniaturas
  * ============================================================ */
 #define ICON_SZ     64
-#define ICON_SLOTS  16
+#define ICON_SLOTS  17            /* 0..15: cards da grade; 16: icone da tela de detalhes */
+#define ICON_DET    16
 #define ICON_ZSIGN  (-1.0f)   /* sentido do eixo Z do .ico em relacao a camera (use 1.0f se aparecer de costas) */
 #define ICON_FLIPY  1.0f      /* use -1.0f se aparecer de cabeca para baixo */
 #define ICON_CA0    0.8776f   /* cos(0.5 rad) - angulo inicial */
@@ -505,6 +507,7 @@ static Icon     *icons[2][MAX_ENT];
 static u8        iconFail[2][MAX_ENT];
 static int       gridRows = 3;
 static int       spinTab = -1, spinIdx = -1;
+static const Icon *dtIcon = NULL;                     /* icone 3D do save na tela de detalhes (NULL = icone da regiao) */
 static float     gCos = ICON_CA0, gSin = ICON_SA0;
 static GSTEXTURE iconTex[ICON_SLOTS];
 static const Icon *slotOwner[ICON_SLOTS];
@@ -978,8 +981,21 @@ static void render(void)
         char sz[24], ln[64];
         window(bx, by, bw, bh);
         ctext(W / 2, by + 12, 0.60f, C_MUTED, "DETALHES DO SAVE");
-        text(bx + 20, by + 38, 0.60f, C_ACC, dtTitle);
-        for (k = 0; k < 3; k++) text(bx + 20, by + 66 + k * 16, 0.42f, C_TXT, dtL[k]);
+        {
+            char fb[96];
+            float tx = bx + 100, mw = bw - 100 - 20;
+            rect(bx + 20, by + 40, 72, 72, RGBA(0, 0, 0, 0x3C));          /* moldura do icone */
+            if (dtIcon) {
+                draw_icon(ICON_DET, dtIcon, bx + 24, by + 44, 64);
+            } else {
+                vgrad(bx + 24, by + 44, 64, 64, reg_col(dtReg), RGBA(20, 22, 50, 0x80));
+                fill_circle(bx + 56, by + 76, 26, RGBA(255, 255, 255, 0x22));
+                ctext(bx + 56, by + 62, 1.0f, C_TXT, REG_TAG[dtReg]);
+            }
+            fit(fb, dtTitle, mw, 0.60f);
+            text(tx, by + 38, 0.60f, C_ACC, fb);
+            for (k = 0; k < 3; k++) { fit(fb, dtL[k], mw, 0.42f); text(tx, by + 66 + k * 16, 0.42f, C_TXT, fb); }
+        }
         rect(bx + 20, by + 118, bw - 40, 2, C_CARD);
         if (dtN == 0) ctext(W / 2, by + 170, 0.45f, C_MUTED, dtNote);
         for (k = 0; k < vis && dtScroll + k < dtN; k++) {
@@ -2323,10 +2339,23 @@ static void show_details(int t)
     }
     if (dtN == 0 && !dtNote[0]) snprintf(dtNote, sizeof(dtNote), "Nenhum arquivo encontrado");
 
+    dtReg = ent_region(e);
+    dtIcon = NULL;
+    if (t < 2) {                                           /* icone 3D do save (gira); sem icone, usa o da regiao */
+        int ci = cursorPos[t];
+        if (!icons[t][ci] && !iconFail[t][ci]) {
+            icons[t][ci] = icon_load(isUsb, e);
+            if (!icons[t][ci]) iconFail[t][ci] = 1;
+        }
+        dtIcon = icons[t][ci];
+        if (dtIcon) { gCos = ICON_CA0; gSin = ICON_SA0; spinTab = t; spinIdx = ci; }
+    }
+
     dtOpen = 1;
     snd_play(SND_TAB);
     while (!done) {
         read_pad();
+        if (dtIcon) { icon_spin(); icon_render((Icon *)dtIcon, gCos, gSin); }
         if ((pad_new & PAD_DOWN) && dtScroll + 10 < dtN) { dtScroll++; snd_play(SND_MOVE); }
         if ((pad_new & PAD_UP) && dtScroll > 0)          { dtScroll--; snd_play(SND_MOVE); }
         if (pad_new & (PAD_CIRCLE | PAD_CROSS)) { done = 1; snd_play(SND_BACK); }
@@ -2334,6 +2363,7 @@ static void show_details(int t)
         present();
     }
     dtOpen = 0;
+    dtIcon = NULL;
 }
 
 static int copy_mc_to_usb(const char *src, const char *dst, const char *label)

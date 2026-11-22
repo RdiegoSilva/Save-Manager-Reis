@@ -18,7 +18,7 @@ Gerenciador de saves com interface estilo dashboard.
 - **Ferramentas do Memory Card** (START): verificar saves, apagar, backup completo, recuperar cartão ilegível e formatar.
 - **Ordenar, filtrar e buscar** (L3): ordem por Nome, Data, Tamanho ou Região; filtro por região (US, EU, JP, KR, Outras, PS1); busca por nome da pasta ou do jogo. Com filtro ativo, o quadro de saves mostra `exibidos/total`.
 - **Tutorial** (START → Tutorial): tela de ajuda com 3 páginas explicando cada botão, atalho, aba, formato e item do menu.
-- **Detalhes do save** (R3): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um (Memory Card, backups em Pasta e PSU).
+- **Detalhes do save** (R3): título, pasta, formato, região, data, tamanho e lista de arquivos com o tamanho de cada um, com o **ícone do jogo** ao lado do título (o ícone 3D girando, quando o save tem; senão o ícone da região) (Memory Card, backups em Pasta e PSU).
 - **Importa também `.cbs` (CodeBreaker), `.sps` (SharkPort) e `.xps` (X-Port).**
 - **Cartões virtuais (VMC do OPL):** os saves de dentro dos arquivos `.bin` / `.ps2` / `.vmc` em `mass:/VMC/` aparecem na aba USB com a etiqueta **VMC**. Dá para importar para o Memory Card real e converter para Pasta, PSU ou MAX.
 - **Saves de PS1** no Memory Card aparecem com a etiqueta **PS1** (roxa), entram no backup e **podem ser restaurados** (a marca de save de PS1 é recriada; veja a seção abaixo).
