@@ -692,6 +692,14 @@ static void draw_card(float x, float y, float w, float h, const Entry *e, int is
     }
 }
 
+static void row_geom(float x, float w, float *dateR, float *sizeR, float *fmtR, float *chipX)
+{
+    *dateR = x + w - 10;
+    *sizeR = *dateR - 150;
+    *fmtR  = *sizeR - 56;
+    *chipX = *fmtR - 62;
+}
+
 /* uma linha da visao em lista: icone pequeno, nome do jogo / pasta, formato, tamanho e data */
 static void draw_row(float x, float y, float w, float h, const Entry *e, int isCur, int isUsb, const Icon *ic, int slot)
 {
@@ -719,17 +727,21 @@ static void draw_row(float x, float y, float w, float h, const Entry *e, int isC
         ctext(x + h, y + h - 13, 0.30f, C_DARK, "OK");
     }
 
-    snprintf(dt, sizeof(dt), "%s %s", e->date, e->time);
-    fmt_size(sz, sizeof(sz), e->size);
-    text(rx - tw(dt, 0.42f), y + 8, 0.42f, C_MUTED, dt);
-    rx -= 150;
-    text(rx - tw(sz, 0.46f), y + 8, 0.46f, C_ACC, sz);
-    rx -= 66;
-    if (isUsb && e->kind != FMT_DIR) {
-        const char *tg = FMT_NAME[e->kind];
-        text(rx - tw(tg, 0.42f), y + 8, 0.42f, C_ACC2, tg);
+    {
+        float dateR, sizeR, fmtR, chipX;
+        row_geom(x, w, &dateR, &sizeR, &fmtR, &chipX);
+        snprintf(dt, sizeof(dt), "%s %s", e->date, e->time);
+        fmt_size(sz, sizeof(sz), e->size);
+        text(dateR - tw(dt, 0.42f), y + 8, 0.42f, C_MUTED, dt);
+        text(sizeR - tw(sz, 0.46f), y + 8, 0.46f, C_ACC, sz);
+        if (isUsb && e->kind != FMT_DIR) {
+            const char *tg = FMT_NAME[e->kind];
+            text(fmtR - tw(tg, 0.42f), y + 8, 0.42f, C_ACC2, tg);
+        }
+        rect(chipX, y + 7, 32, 16, reg_col(r));                                             /* etiqueta da regiao */
+        ctext(chipX + 16, y + 10, 0.34f, C_DARK, REG_TAG[r]);
+        rx = chipX - 8;
     }
-    rx -= 56;
     {
         float nx = x + h + 8, mw = rx - nx;
         if (e->title[0]) {
@@ -806,7 +818,8 @@ static void render(void)
     hgrad(0, 54, W, 3, C_ACC, C_ACC2);
     vgrad(0, 57, W, 12, RGBA(100, 80, 255, 0x26), RGBA(100, 80, 255, 0x00));
     draw_logo(M + 2, 9, 38);
-    text_sh(M + 46, 7, 0.78f, C_TXT, APP_NAME);
+    text_sh(M + 46, 7, 0.78f, C_TXT, "SAVE MANAGER");
+    text_sh(M + 46 + tw("SAVE MANAGER ", 0.78f), 7, 0.78f, C_ACC, "REIS");
     text(M + 48, 33, 0.40f, C_MUTED, "Gerenciador de saves  " APP_VERSION "  -  por Diego Reis");
     if (clk.y) {
         snprintf(buf, sizeof(buf), "%02d:%02d", clk.h, clk.mi);
@@ -917,7 +930,7 @@ static void render(void)
             ctext(W / 2, 200, 0.48f, C_MUTED, usbOk ? (usbFullN > 0 ? "START > Organizar abre o menu de filtros e busca" : "Exporte um save, coloque .psu .max .cbs .sps .xps em SaveManagerReis ou VMCs em mass:/VMC") : "Depois pressione O para atualizar");
         }
     } else {
-        const float gap = 10, vgap = listMode ? 3 : 8, top = 130, ch = listMode ? 30 : 78;
+        const float gap = 10, vgap = listMode ? 3 : 8, top = listMode ? 144 : 130, ch = listMode ? 30 : 78;
         const float cw = (W - 2 * M - 3 * gap) / 4.0f;
         int cols = COLS;
         int rows = (int)((H - 58 - top + vgap) / (ch + vgap));
@@ -930,6 +943,14 @@ static void render(void)
         first = topRow[tab] * cols;
         last  = (topRow[tab] + rows) * cols;
         if (last > N) last = N;
+        if (listMode) {                                       /* cabecalho das colunas */
+            float rw = W - 2 * M - 12, dR, sR, fR, cX;
+            row_geom(M, rw, &dR, &sR, &fR, &cX);
+            text(M + 8 + ch, top - 13, 0.30f, C_MUTED, "NOME DO JOGO / PASTA");
+            ctext(cX + 16, top - 13, 0.30f, C_MUTED, "REGIAO");
+            text(sR - tw("TAMANHO", 0.30f), top - 13, 0.30f, C_MUTED, "TAMANHO");
+            text(dR - tw("DATA", 0.30f), top - 13, 0.30f, C_MUTED, "DATA");
+        }
         for (i = first; i < last; i++) {
             int r = i / cols - topRow[tab], c = i % cols;
             if (listMode)
@@ -962,7 +983,7 @@ static void render(void)
         x = key_btn(x, H - 50, 2, C_GREEN, tl);
     }
     x = key_btn(x, H - 50, 3, C_RED, "Atualizar");
-    if (x + 90 < W) key_pill(x, H - 50, "R3", "Detalhes");
+    if (x + 90 < W) { rect(x - 8, H - 50, 1, 18, C_CARD); key_pill(x + 4, H - 50, "R3", "Detalhes"); }
     x = M;
     x = key_pill(x, H - 30, "L1/R1", "Abas");
     if (tab == TAB_MC) {
